@@ -28,7 +28,7 @@
 
     <style>
         /* --- 基础设置 --- */
-        body { margin: 0; overflow: hidden; background-color: #020203; font-family: 'Inter', sans-serif; user-select: none; -webkit-tap-highlight-color: transparent; }
+        body { margin: 0; overflow: hidden; background-color: #020203; font-family: 'Inter', 'Microsoft YaHei', '微软雅黑', 'SimHei', '黑体', 'Arial', sans-serif; user-select: none; -webkit-tap-highlight-color: transparent; }
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
         
         /* 顶部信息 */
@@ -97,6 +97,7 @@
             background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #aaa; 
             padding: 8px 16px; border-radius: 12px; cursor: pointer; font-size: 13px; font-weight: 600; 
             white-space: nowrap; transition: all 0.2s; 
+            font-family: 'Microsoft YaHei', '微软雅黑', 'SimHei', '黑体', 'Arial', sans-serif;
         }
         .shape-btn.active { color: #fff; background: rgba(255, 255, 255, 0.15); border-color: #00eaff; box-shadow: 0 0 10px rgba(0, 234, 255, 0.2); }
         /* 针对不同按钮的激活色 */
@@ -104,6 +105,7 @@
         #btn-tesseract.active { color: #bd00ff; border-color: #bd00ff; box-shadow: 0 0 10px rgba(189, 0, 255, 0.2); }
         #btn-mobius.active { color: #aa55ff; border-color: #aa55ff; box-shadow: 0 0 10px rgba(170, 85, 255, 0.2); }
         #btn-shore.active { color: #00ff88; border-color: #00ff88; box-shadow: 0 0 10px rgba(0, 255, 136, 0.2); }
+        #btn-shore { min-width: 60px; text-align: center; }
         
         /* 电脑版滑块组 */
         .sliders-wrapper { display: flex; align-items: center; gap: 15px; }
