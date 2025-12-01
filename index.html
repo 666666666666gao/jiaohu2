@@ -1105,7 +1105,7 @@
             imageProcessCtx.drawImage(img, 0, 0, width, height);
             const data = imageProcessCtx.getImageData(0, 0, width, height).data;
             const points = [];
-            const step = Math.max(1, Math.floor(Math.min(width, height) / 220)); // 更细的采样，适合线稿
+            const step = Math.max(1, Math.floor(Math.min(width, height) / 260)); // 更细的采样，适合线稿（提高连续性）
             
             // 计算整体亮度，用于自适应阈值（假设线稿是深色线条+浅色背景）
             let sumBrightness = 0;
@@ -1153,7 +1153,7 @@
                     const px = (x / width - 0.5) * 40;
                     const aspect = height / width;
                     const py = -(y / height - 0.5) * 40 * aspect;
-                    const pz = (Math.random() - 0.5) * 1.0;
+                    const pz = (Math.random() - 0.5) * 0.6;
                     points.push({ x: px, y: py, z: pz });
                 }
             }
@@ -1167,7 +1167,7 @@
                 return;
             }
             const attr = particleSystem.geometry.attributes.targetImage.array;
-            const imagePortion = 0.75; // 专门给线稿分配 75% 的粒子
+            const imagePortion = 0.9; // 专门给线稿分配 90% 的粒子，线更饱满
             const imageCount = Math.floor(count * imagePortion);
             // 先填充线稿粒子：更小的随机偏移，贴线一点
             for(let i = 0; i < imageCount; i++) {
@@ -1251,7 +1251,7 @@
                     uWeightGalaxy: { value: 0.0 }, uWeightTesseract: { value: 0.0 }, uWeightMobius: { value: 0.0 }, uWeightShore: { value: 1.0 }, uWeightImage: { value: 0.0 }, uWeightCustom: { value: 0.0 },
                     uChaos: { value: 0 }, uSpread: { value: 1.5 }, 
                     uPixelRatio: { value: renderer.getPixelRatio() },
-                    uImageSizeFactor: { value: 0.55 },
+                    uImageSizeFactor: { value: 0.45 },
                     uColorInside: { value: new THREE.Color(0xffaa33) },
                     uColorOutside: { value: new THREE.Color(0x1b3984) },
                     uMouseWorld: { value: new THREE.Vector3(0, 0, 0) }
