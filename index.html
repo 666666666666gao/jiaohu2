@@ -1105,18 +1105,55 @@
             imageProcessCtx.drawImage(img, 0, 0, width, height);
             const data = imageProcessCtx.getImageData(0, 0, width, height).data;
             const points = [];
-            const step = Math.max(2, Math.floor(Math.min(width, height) / 200));
-            for (let y = 0; y < height; y += step) {
-                for (let x = 0; x < width; x += step) {
+            const step = Math.max(1, Math.floor(Math.min(width, height) / 220)); // 更细的采样，适合线稿
+            
+            // 计算整体亮度，用于自适应阈值（假设线稿是深色线条+浅色背景）
+            let sumBrightness = 0;
+            let sampleCount = 0;
+            const sampleStep = step * 4;
+            for (let y = 0; y < height; y += sampleStep) {
+                for (let x = 0; x < width; x += sampleStep) {
+                    const idx = (y * width + x) * 4;
+                    const b = (data[idx] + data[idx+1] + data[idx+2]) / 3;
+                    sumBrightness += b;
+                    sampleCount++;
+                }
+            }
+            const avgBrightness = sampleCount > 0 ? sumBrightness / sampleCount : 255;
+            const lineThreshold = Math.max(40, avgBrightness - 40); // 比整体背景更暗的部分视为线条
+
+            for (let y = 1; y < height - 1; y += step) {
+                for (let x = 1; x < width - 1; x += step) {
                     const idx = (y * width + x) * 4;
                     const alpha = data[idx + 3];
-                    if(alpha < 40) continue;
-                    const brightness = (data[idx] + data[idx+1] + data[idx+2]) / 3;
-                    if(brightness < 35) continue;
+                    if (alpha < 40) continue;
+                    
+                    const r = data[idx], g = data[idx+1], b = data[idx+2];
+                    const brightness = (r + g + b) / 3;
+                    // 只保留偏暗的像素（线稿的线）
+                    if (brightness > lineThreshold) continue;
+
+                    // 简单的边缘检测：和左右/上下像素对比，避免整块涂黑而只取轮廓
+                    const leftIdx = (y * width + (x-1)) * 4;
+                    const rightIdx = (y * width + (x+1)) * 4;
+                    const upIdx = ((y-1) * width + x) * 4;
+                    const downIdx = ((y+1) * width + x) * 4;
+                    const bLeft = (data[leftIdx] + data[leftIdx+1] + data[leftIdx+2]) / 3;
+                    const bRight = (data[rightIdx] + data[rightIdx+1] + data[rightIdx+2]) / 3;
+                    const bUp = (data[upIdx] + data[upIdx+1] + data[upIdx+2]) / 3;
+                    const bDown = (data[downIdx] + data[downIdx+1] + data[downIdx+2]) / 3;
+                    const edgeStrength = Math.max(
+                        Math.abs(brightness - bLeft),
+                        Math.abs(brightness - bRight),
+                        Math.abs(brightness - bUp),
+                        Math.abs(brightness - bDown)
+                    );
+                    if (edgeStrength < 15) continue; // 太平滑的区域忽略，只保留线条边缘
+
                     const px = (x / width - 0.5) * 40;
                     const aspect = height / width;
                     const py = -(y / height - 0.5) * 40 * aspect;
-                    const pz = (Math.random() - 0.5) * 1.5;
+                    const pz = (Math.random() - 0.5) * 1.0;
                     points.push({ x: px, y: py, z: pz });
                 }
             }
@@ -1130,12 +1167,23 @@
                 return;
             }
             const attr = particleSystem.geometry.attributes.targetImage.array;
-            for(let i = 0; i < count; i++) {
+            const imagePortion = 0.75; // 专门给线稿分配 75% 的粒子
+            const imageCount = Math.floor(count * imagePortion);
+            // 先填充线稿粒子：更小的随机偏移，贴线一点
+            for(let i = 0; i < imageCount; i++) {
                 const p = points[Math.floor(Math.random() * points.length)];
                 const i3 = i * 3;
-                attr[i3] = p.x + (Math.random()-0.5) * 0.5;
+                attr[i3]   = p.x + (Math.random()-0.5) * 0.15;
+                attr[i3+1] = p.y + (Math.random()-0.5) * 0.15;
+                attr[i3+2] = p.z + (Math.random()-0.5) * 0.4;
+            }
+            // 剩余的粒子稍微散布在线条附近，作为“光晕”
+            for(let i = imageCount; i < count; i++) {
+                const p = points[Math.floor(Math.random() * points.length)];
+                const i3 = i * 3;
+                attr[i3]   = p.x + (Math.random()-0.5) * 0.5;
                 attr[i3+1] = p.y + (Math.random()-0.5) * 0.5;
-                attr[i3+2] = p.z + (Math.random()-0.5) * 0.5;
+                attr[i3+2] = p.z + (Math.random()-0.5) * 0.8;
             }
             particleSystem.geometry.attributes.targetImage.needsUpdate = true;
             setMode('image');
@@ -1203,13 +1251,14 @@
                     uWeightGalaxy: { value: 0.0 }, uWeightTesseract: { value: 0.0 }, uWeightMobius: { value: 0.0 }, uWeightShore: { value: 1.0 }, uWeightImage: { value: 0.0 }, uWeightCustom: { value: 0.0 },
                     uChaos: { value: 0 }, uSpread: { value: 1.5 }, 
                     uPixelRatio: { value: renderer.getPixelRatio() },
+                    uImageSizeFactor: { value: 0.55 },
                     uColorInside: { value: new THREE.Color(0xffaa33) },
                     uColorOutside: { value: new THREE.Color(0x1b3984) },
                     uMouseWorld: { value: new THREE.Vector3(0, 0, 0) }
                 },
                 vertexShader: `
                     uniform float uTime; uniform float uWeightGalaxy; uniform float uWeightTesseract; uniform float uWeightMobius; uniform float uWeightShore; uniform float uWeightImage; uniform float uWeightCustom;
-                    uniform float uChaos; uniform float uSpread; uniform float uPixelRatio; uniform vec3 uColorInside; uniform vec3 uColorOutside; uniform vec3 uMouseWorld;
+                    uniform float uChaos; uniform float uSpread; uniform float uPixelRatio; uniform float uImageSizeFactor; uniform vec3 uColorInside; uniform vec3 uColorOutside; uniform vec3 uMouseWorld;
                     attribute vec3 targetGalaxy; attribute vec3 targetTesseract; attribute vec3 targetMobius; attribute vec3 targetShore; attribute vec3 targetImage; attribute vec3 targetCustom;
                     attribute float mixRatio; attribute float size; attribute vec3 randomness;
                     varying vec3 vColor;
@@ -1238,7 +1287,8 @@
                         }
                         vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
                         gl_Position = projectionMatrix * mvPosition;
-                        gl_PointSize = size * uPixelRatio * (150.0 / -mvPosition.z);
+                        float sizeFactor = mix(1.0, uImageSizeFactor, uWeightImage);
+                        gl_PointSize = size * sizeFactor * uPixelRatio * (150.0 / -mvPosition.z);
                     }
                 `,
                 fragmentShader: `varying vec3 vColor; void main() { float d = distance(gl_PointCoord, vec2(0.5)); if(d > 0.5) discard; float alpha = pow(1.0 - smoothstep(0.0, 0.5, d), 3.0); gl_FragColor = vec4(vColor, alpha); }`,
