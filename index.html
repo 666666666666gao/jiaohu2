@@ -431,7 +431,7 @@
         window.isWebcamLoading = false; // 摄像头加载锁
         window.videoStream = null;
         window.hands = null;
-        let handOpenness = 0, handX = 0, smoothedOpenness = 0;
+        let handOpenness = 0, handX = 0, handY = 0, smoothedOpenness = 0;
         const colorThemes = [
             { inside: '#ffaa33', outside: '#1b3984', bg: '#1b3984' }, // 默认金橙+深蓝
             { inside: '#00ffcc', outside: '#0044ff', bg: '#002255' }, // 青绿霓虹
@@ -441,6 +441,10 @@
         let currentThemeIndex = 0;
         let lastGestureColorTime = 0;
         let oneGestureActive = false;
+        let isTimelineActive = false;
+        let timelineT = 0.0; // 0 线稿 → 0.5 雕塑 → 1 星空
+        let energyBurstEndTime = 0;
+        let bloomPass = null;
         let isDrawing = false, lastX = 0, lastY = 0;
         const paintCanvas = document.getElementById('paint-canvas');
         const ctx = paintCanvas.getContext('2d');
@@ -688,7 +692,7 @@
             controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.5;
 
             const renderScene = new RenderPass(scene, camera);
-            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+            bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
             bloomPass.threshold = 0; bloomPass.strength = 1.2; bloomPass.radius = 0.5;
             composer = new EffectComposer(renderer);
             composer.addPass(renderScene); composer.addPass(bloomPass);
@@ -975,7 +979,7 @@
             }
             try {
                 window.hands = new window.Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-                window.hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+                window.hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
                 window.hands.onResults(onHandResults);
                 detectLoop();
             } catch (e) { console.log("AI Init Error", e); }
@@ -1016,6 +1020,15 @@
             return indexUp && !middleUp && !ringUp && !pinkyUp;
         }
 
+        function detectTwoFingerTimelineGesture(landmarks) {
+            const indexUp = isFingerUp(landmarks, 8, 6);
+            const middleUp = isFingerUp(landmarks, 12, 10);
+            const ringUp = isFingerUp(landmarks, 16, 14);
+            const pinkyUp = isFingerUp(landmarks, 20, 18);
+            // 剪刀手：食指+中指抬起，其它收起
+            return indexUp && middleUp && !ringUp && !pinkyUp;
+        }
+
         function handleColorGesture(landmarks) {
             const gesture = detectOneGesture(landmarks);
             if (gesture && !oneGestureActive) {
@@ -1026,6 +1039,21 @@
             }
         }
 
+        function handleTimelineGesture(landmarks) {
+            const active = detectTwoFingerTimelineGesture(landmarks);
+            if (!active) {
+                isTimelineActive = false;
+                return;
+            }
+            isTimelineActive = true;
+            // 使用食指与中指平均 X 作为时间线控制
+            const xIndex = landmarks[8].x;
+            const xMiddle = landmarks[12].x;
+            const xAvg = (xIndex + xMiddle) * 0.5;
+            // 映射到 [0,1]
+            timelineT = Math.max(0, Math.min(1, xAvg));
+        }
+
         function onHandResults(results) {
             const canvas = document.getElementById('output-canvas');
             const ctx = canvas.getContext('2d');
@@ -1033,16 +1061,31 @@
             if (canvas.width !== video.videoWidth) { canvas.width = video.videoWidth; canvas.height = video.videoHeight; }
             ctx.save(); ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0];
-                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00eaff', lineWidth: 2});
-                drawLandmarks(ctx, landmarks, {color: '#ffaa33', lineWidth: 1, radius: 2});
-                const wrist = landmarks[0]; const tip = landmarks[9];
+                const mainHand = results.multiHandLandmarks[0];
+                drawConnectors(ctx, mainHand, HAND_CONNECTIONS, {color: '#00eaff', lineWidth: 2});
+                drawLandmarks(ctx, mainHand, {color: '#ffaa33', lineWidth: 1, radius: 2});
+                const wrist = mainHand[0]; const tip = mainHand[9];
                 const palmLen = Math.hypot(wrist.x - tip.x, wrist.y - tip.y);
-                let tipsDist = 0; [4,8,12,16,20].forEach(i => tipsDist += Math.hypot(wrist.x - landmarks[i].x, wrist.y - landmarks[i].y));
+                let tipsDist = 0; [4,8,12,16,20].forEach(i => tipsDist += Math.hypot(wrist.x - mainHand[i].x, wrist.y - mainHand[i].y));
                 const ratio = (tipsDist / 5) / palmLen;
                 handOpenness = Math.max(0, Math.min(1, (ratio - 1.0) / 0.8));
                 handX = (tip.x - 0.5) * 2; 
-                handleColorGesture(landmarks);
+                handY = (tip.y - 0.5) * 2;
+
+                handleColorGesture(mainHand);
+                handleTimelineGesture(mainHand);
+
+                // 能量收束：检测两只手靠近
+                if (results.multiHandLandmarks.length > 1) {
+                    const other = results.multiHandLandmarks[1];
+                    const w2 = other[0];
+                    const dist = Math.hypot(wrist.x - w2.x, wrist.y - w2.y);
+                    if (dist < 0.12) {
+                        energyBurstEndTime = performance.now() * 0.001 + 1.0; // 1 秒能量特效
+                        updateStatus("⚡ 能量收束！", "#ffdd55");
+                    }
+                }
+
                 updateStatus("🟢 捕捉中", "#00ffaa");
             } else {
                 // 如果没有检测到手势，保持当前值，不衰减（保持初始扩散状态）
@@ -1388,8 +1431,42 @@
                     particleSystem.rotation.y += handX * 0.03;
                     if(controls) controls.autoRotate = false;
                 }
+                // 垂直移动控制上下俯仰
+                if (Math.abs(handY) > 0.15) {
+                    particleSystem.rotation.x += handY * 0.02;
+                }
             }
             if(material) {
+                // 时间线手势混合形态：线稿 → 雕塑 → 星云
+                if (isTimelineActive) {
+                    const t = timelineT;
+                    let wImage = 0, wMobius = 0, wGalaxy = 0;
+                    if (t < 0.5) {
+                        const k = t / 0.5;
+                        wImage = 1.0 - k;
+                        wMobius = k;
+                    } else {
+                        const k = (t - 0.5) / 0.5;
+                        wMobius = 1.0 - k;
+                        wGalaxy = k;
+                    }
+                    material.uniforms.uWeightImage.value = wImage;
+                    material.uniforms.uWeightMobius.value = wMobius;
+                    material.uniforms.uWeightGalaxy.value = wGalaxy;
+                    material.uniforms.uWeightShore.value = 0.0;
+                    material.uniforms.uWeightTesseract.value = 0.0;
+                    material.uniforms.uWeightCustom.value = 0.0;
+                }
+
+                // 能量收束特效：短时间增强亮度与扰动
+                if (energyBurstEndTime > time && bloomPass) {
+                    const phase = (energyBurstEndTime - time); // 0..1
+                    bloomPass.strength = 1.2 + phase * 1.8;
+                    material.uniforms.uChaos.value = 0.8 * phase;
+                } else if (bloomPass) {
+                    bloomPass.strength = 1.2;
+                }
+
                 const vector = new THREE.Vector3(mouse.x, mouse.y, 0.5); vector.unproject(camera);
                 const dir = vector.sub(camera.position).normalize();
                 material.uniforms.uMouseWorld.value.copy(camera.position.clone().add(dir.multiplyScalar(-camera.position.z / dir.z)));
