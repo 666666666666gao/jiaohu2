@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>星际粒子 - 完美运行版</title>
+
+    <!-- 状态监控 & AI 库 -->
+    <script>
+        window.isHandsLoaded = false;
+        function onHandsLoaded() {
+            console.log("MediaPipe Hands JS Loaded");
+            window.isHandsLoaded = true;
+            updateStatus("AI 组件就绪", "#00eaff");
+            const btn = document.getElementById('btn-webcam');
+            if(btn) btn.style.opacity = "1";
+        }
+        function updateStatus(text, color) {
+            const el = document.getElementById('system-status');
+            if(el) {
+                el.innerText = text;
+                el.style.color = color || '#fff';
+            }
+        }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous" onload="onHandsLoaded()" onerror="alert('AI组件加载失败，请检查网络')"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+    <style>
+        /* --- 基础设置 --- */
+        body { margin: 0; overflow: hidden; background-color: #020203; font-family: 'Inter', sans-serif; user-select: none; -webkit-tap-highlight-color: transparent; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        
+        /* 顶部信息 */
+        #system-status {
+            position: fixed; top: 10px; left: 10px; color: #aaa; font-size: 12px; font-weight: bold;
+            background: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 20px; z-index: 200; pointer-events: none;
+            border: 1px solid rgba(255,255,255,0.1); transition: color 0.3s;
+        }
+
+        #loading { position: absolute; inset: 0; background: #000; z-index: 100; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #00eaff; transition: opacity 0.5s; pointer-events: none; }
+
+        /* --- 摄像头 & 拖拽 --- */
+        #webcam-container { 
+            position: fixed; bottom: 20px; right: 20px; width: 160px; height: 120px; 
+            border-radius: 12px; overflow: hidden; border: 2px solid rgba(255, 50, 50, 0.5); 
+            z-index: 50; background: #000; display: none; 
+            pointer-events: auto; touch-action: none; cursor: move; 
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+        }
+        #webcam-video { position: absolute; width: 100%; height: 100%; object-fit: cover; opacity: 0; transform: scaleX(-1); }
+        #output-canvas { width: 100%; height: 100%; transform: scaleX(-1); object-fit: cover; pointer-events: none; position: absolute; top: 0; left: 0; }
+        
+        #touch-indicator { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 60px; height: 60px; border: 2px solid rgba(0, 255, 170, 0.5); border-radius: 50%; pointer-events: none; display: none; z-index: 20; box-shadow: 0 0 20px rgba(0,255,170,0.3); }
+
+        /* --- 画板 (电脑大屏版) --- */
+        #drawing-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.9); z-index: 200; display: none; flex-direction: column; align-items: center; justify-content: center; }
+        #drawing-modal.visible { display: flex; }
+        .canvas-wrapper { 
+            border: 2px solid rgba(255, 255, 255, 0.2); border-radius: 16px; 
+            overflow: hidden; background: #000; touch-action: none;
+            max-width: 98vw; max-height: 95vh;
+        }
+        .modal-controls { display: flex; gap: 15px; margin-top: 20px; }
+        .modal-btn { padding: 10px 25px; border-radius: 30px; border: 1px solid #444; background: #222; color: #fff; font-size: 14px; cursor: pointer; }
+        .btn-confirm { background: #00ffaa; color: #000; border: none; }
+
+        /* --- UI 布局 (通用基础) --- */
+        #ui {
+            position: fixed; 
+            bottom: 30px; 
+            left: 50%; 
+            transform: translateX(-50%);
+            width: auto;
+            max-width: 98%; 
+            z-index: 10; 
+            transition: opacity 0.3s ease, transform 0.3s ease; 
+            opacity: 1; 
+            pointer-events: none; 
+        }
+        #ui.hidden { opacity: 0; transform: translate(-50%, 50px); pointer-events: none; }
+
+        .dock-panel { 
+            background: rgba(12, 14, 18, 0.85);
+            backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px); 
+            border: 1px solid rgba(255, 255, 255, 0.1); 
+            padding: 12px 24px; border-radius: 24px; 
+            pointer-events: auto; 
+            display: flex; align-items: center; gap: 15px; 
+            box-shadow: 0 20px 50px rgba(0,0,0,0.7); 
+        }
+        
+        .divider { width: 1px; height: 24px; background: rgba(255, 255, 255, 0.15); margin: 0 5px; }
+        .btn-group { display: flex; gap: 8px; align-items: center; }
+        
+        .shape-btn { 
+            background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #aaa; 
+            padding: 8px 16px; border-radius: 12px; cursor: pointer; font-size: 13px; font-weight: 600; 
+            white-space: nowrap; transition: all 0.2s; 
+        }
+        .shape-btn.active { color: #fff; background: rgba(255, 255, 255, 0.15); border-color: #00eaff; box-shadow: 0 0 10px rgba(0, 234, 255, 0.2); }
+        /* 针对不同按钮的激活色 */
+        #btn-galaxy.active { color: #00eaff; }
+        #btn-tesseract.active { color: #bd00ff; border-color: #bd00ff; box-shadow: 0 0 10px rgba(189, 0, 255, 0.2); }
+        #btn-mobius.active { color: #aa55ff; border-color: #aa55ff; box-shadow: 0 0 10px rgba(170, 85, 255, 0.2); }
+        #btn-shore.active { color: #00ff88; border-color: #00ff88; box-shadow: 0 0 10px rgba(0, 255, 136, 0.2); }
+        
+        /* 电脑版滑块组 */
+        .sliders-wrapper { display: flex; align-items: center; gap: 15px; }
+        .slider-group { display: flex; align-items: center; gap: 8px; min-width: 100px; }
+        .slider-label { font-size: 12px; font-weight: 700; color: #00eaff; white-space: nowrap; }
+        
+        /* --- 滑块样式 --- */
+        input[type="range"] { 
+            flex: 1; 
+            -webkit-appearance: none; 
+            height: 4px; 
+            background: rgba(255,255,255,0.15); 
+            border-radius: 2px; 
+            width: 80px; 
+            cursor: pointer; 
+            outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px; 
+            height: 14px;
+            border-radius: 50%;
+            background: #0099ff; 
+            box-shadow: 0 0 5px rgba(0, 153, 255, 0.5); 
+            margin-top: -5px; 
+            border: none;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #0099ff;
+            border: none;
+            box-shadow: 0 0 5px rgba(0, 153, 255, 0.5);
+        }
+        
+        /* --- 颜色触发器 --- */
+        .color-dock-section { 
+            display: flex; align-items: center; gap: 12px; 
+            background: none; padding: 0; border: none; 
+        }
+        .trigger-group { display: flex; gap: 12px; align-items: center; position: relative; }
+        .trigger-item { display: flex; flex-direction: column; align-items: center; gap: 0px; cursor: pointer; }
+        
+        .color-trigger {
+            width: 24px; height: 24px; border-radius: 50%; 
+            box-shadow: 0 0 5px rgba(0,0,0,0.3);
+            position: relative; transition: all 0.2s; transform: scale(1);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .trigger-item:hover .color-trigger { transform: scale(1.1); border-color: #fff; }
+        .trigger-label { display: none; } 
+        
+        /* --- 颜色面板 --- */
+        #custom-color-picker {
+            position: absolute; bottom: 60px; right: 0; width: 260px;
+            background: rgba(20, 20, 25, 0.95); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 16px; padding: 16px;
+            display: none; flex-direction: column; gap: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.8); z-index: 200;
+        }
+        #custom-color-picker.visible { display: flex; animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        @keyframes popIn { from { opacity: 0; transform: scale(0.9) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+
+        .picker-header { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #aaa; font-weight: bold; }
+        .picker-close { cursor: pointer; padding: 4px; font-size: 14px; }
+        .picker-close:hover { color: #fff; }
+
+        .picker-sl { width: 100%; height: 100px; background: red; position: relative; border-radius: 8px; cursor: crosshair; background-image: linear-gradient(to right, #fff, rgba(255,255,255,0)), linear-gradient(to top, #000, rgba(0,0,0,0)); }
+        .picker-sl-thumb { width: 12px; height: 12px; border: 2px solid #fff; border-radius: 50%; position: absolute; transform: translate(-50%, -50%); box-shadow: 0 0 5px rgba(0,0,0,0.5); pointer-events: none; }
+        .picker-hue { width: 100%; height: 12px; border-radius: 6px; cursor: pointer; position: relative; background: linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%); }
+        .picker-hue-thumb { width: 12px; height: 12px; background: #fff; border-radius: 50%; position: absolute; top: 0; transform: translateX(-50%); box-shadow: 0 0 2px rgba(0,0,0,0.5); pointer-events: none; }
+
+        .picker-rgb { display: flex; gap: 8px; justify-content: space-between; }
+        .rgb-input { flex: 1; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 4px; padding: 4px; text-align: center; font-size: 12px; font-family: monospace; }
+        .rgb-label { color: #888; font-size: 10px; text-align: center; margin-top: 2px; }
+
+        .picker-presets { display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 12px; }
+        .preset-btn { width: 24px; height: 24px; border-radius: 50%; cursor: pointer; border: 1px solid rgba(255,255,255,0.2); transition: transform 0.2s; }
+        .preset-btn:hover { transform: scale(1.1); border-color: #fff; }
+
+        /* 隐藏“点此退出全屏”按钮 */
+        #restore-ui-btn { display: none !important; }
+
+        /* --- 手机端专属样式 --- */
+        /* 全屏按钮悬浮右上角 */
+        .mobile-fab-btn {
+            position: fixed !important;
+            top: 15px; right: 15px;
+            width: 44px; height: 44px; padding: 0;
+            border-radius: 50%;
+            z-index: 301 !important;
+            background: rgba(12, 14, 18, 0.6);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+            display: flex; justify-content: center; align-items: center;
+            font-size: 0 !important;
+        }
+        .mobile-fab-btn::after { content: '⛶'; font-size: 20px; color: #fff; }
+
+        /* 手机端布局调整 */
+        @media (max-width: 850px) {
+            #ui { bottom: 20px; width: 100%; max-width: 100%; transform: translateX(-50%); left: 50%; } 
+            
+            .dock-panel { 
+                flex-direction: column; 
+                padding: 12px; gap: 15px; 
+                width: 96%; box-sizing: border-box; border-radius: 24px; 
+            }
+            .divider { display: none; }
+            
+            .btn-group { 
+                width: 100%; overflow-x: auto; 
+                justify-content: flex-start;
+                gap: 8px; padding-bottom: 2px;
+                -webkit-overflow-scrolling: touch;
+            }
+            .btn-group::-webkit-scrollbar { display: none; }
+            
+            .shape-btn { flex: 0 0 auto; padding: 8px 16px; font-size: 12px; }
+
+            .sliders-wrapper { flex-direction: row; width: 100%; justify-content: space-between; gap: 8px; flex-wrap: nowrap; }
+            .slider-group { min-width: 0; flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+            input[type="range"] { 
+                width: 100%; 
+                height: 6px; 
+                background: rgba(255,255,255,0.1); 
+            }
+            input[type="range"]::-webkit-slider-thumb {
+                width: 18px; height: 18px;
+                background: #fff;
+                margin-top: -6px;
+                box-shadow: 0 0 8px rgba(255,255,255,0.6);
+            }
+            
+            #webcam-container { 
+                width: 100px; height: 133px; 
+                top: 80px; left: 15px; 
+                bottom: auto; right: auto; 
+                border: 1px solid rgba(255, 50, 50, 0.5);
+            }
+            
+            /* 手机端底部一行工具栏容器 */
+            #mobile-tools-row {
+                display: flex;
+                align-items: center;
+                justify-content: flex-start; /* 靠左对齐 */
+                width: 100%;
+                gap: 15px; /* 元素间距 */
+                margin-top: 5px;
+            }
+
+            /* 手机端颜色区域：无框，横向 */
+            .color-dock-section {
+                padding: 0;
+                margin: 0;
+                background: none !important; /* 移除外框背景 */
+                border: none !important; /* 移除边框 */
+                width: auto;
+                position: relative; /* 恢复定位上下文 */
+            }
+            .trigger-group {
+                flex-direction: row !important; /* 强制横向 */
+                gap: 15px !important;
+                position: relative; /* 确保子绝对定位参考它 */
+            }
+            
+            /* 修复：颜色面板在手机端强制屏幕居中 fixed 定位 */
+            #custom-color-picker { 
+                position: fixed !important; /* 强制基于窗口定位，防止跑偏 */
+                bottom: 140px !important; /* 距离底部的高度，避开UI栏 */
+                left: 50% !important; /* 水平居中起点 */
+                right: auto !important; 
+                top: auto !important;
+                width: 260px !important; /* 强制固定宽度 */
+                transform: translateX(-50%) !important; /* 真正的水平居中修正 */
+                z-index: 500;
+                margin: 0;
+            }
+
+            /* 颜色触发器尺寸 (保持与全屏按钮一致) */
+            .color-trigger {
+                width: 44px !important;
+                height: 44px !important;
+                box-sizing: border-box !important;
+                border: 2px solid rgba(255,255,255,0.1) !important;
+            }
+            .trigger-item { margin: 0; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="system-status">正在初始化...</div>
+
+    <div id="loading">
+        <h2 style="font-weight:300; letter-spacing:4px; font-size: 20px;">SYSTEM LOADING</h2>
+    </div>
+    
+    <!-- 隐藏退出全屏按钮 -->
+    <div id="restore-ui-btn" onclick="toggleImmersive()">👆 点此退出全屏</div>
+
+    <div id="touch-indicator"></div>
+    <div id="canvas-container"></div>
+
+    <div id="webcam-container">
+        <video id="webcam-video" playsinline webkit-playsinline muted autoplay></video>
+        <canvas id="output-canvas"></canvas>
+    </div>
+
+    <div id="drawing-modal">
+        <div style="color: #aaa; font-size: 12px; margin-bottom: 15px;">请在下方区域绘制图形</div>
+        <div class="canvas-wrapper">
+            <canvas id="paint-canvas"></canvas>
+        </div>
+        <div class="modal-controls">
+            <button class="modal-btn" onclick="clearCanvas()">清空</button>
+            <button class="modal-btn" onclick="closeModal()">取消</button>
+            <button class="modal-btn btn-confirm" onclick="confirmDrawing()">生成粒子</button>
+        </div>
+    </div>
+
+    <div id="ui">
+        <div class="dock-panel" id="main-dock">
+            <div class="btn-group" id="main-btns">
+                <button id="btn-galaxy" class="shape-btn active" onclick="setMode('galaxy')">星云</button>
+                <button id="btn-tesseract" class="shape-btn" onclick="setMode('tesseract')">四维投影</button>
+                <button id="btn-mobius" class="shape-btn" onclick="setMode('mobius')">莫比乌斯</button>
+                <button id="btn-shore" class="shape-btn" onclick="setMode('shore')">上岸</button>
+                <button id="btn-draw" class="shape-btn" onclick="openDrawingModal()">🖌️ 手绘</button>
+                <button id="btn-webcam" class="shape-btn" onclick="attemptWebcam()">📷 手势控制</button>
+                <button id="btn-immersive" class="shape-btn" onclick="toggleImmersive()">⛶ 全屏</button>
+                <button id="btn-custom" class="shape-btn" style="display:none;">自定义</button>
+                <!-- 新增主页按钮 (默认放在按钮组里，手机端会被移走) -->
+                <button id="btn-homepage" class="shape-btn" onclick="window.open('https://xhslink.com/m/5l0ABQw8u6b', '_blank')">🏠 主页</button>
+            </div>
+            <div class="divider"></div>
+            <div class="sliders-wrapper">
+                <div class="slider-group">
+                    <span class="slider-label">混沌</span>
+                    <input type="range" id="chaos-slider" min="0" max="1" step="0.01" value="0">
+                </div>
+                <div class="slider-group">
+                    <span class="slider-label">密度</span>
+                    <input type="range" id="model-density-slider" min="0" max="50000" step="100" value="50000">
+                </div>
+                <div class="slider-group">
+                    <span class="slider-label">扩散</span>
+                    <input type="range" id="spread-slider" min="0" max="2.0" step="0.01" value="0.0">
+                </div>
+            </div>
+            <div class="divider"></div>
+            <div class="color-dock-section" id="color-dock">
+                <div class="trigger-group">
+                    <div class="trigger-item" id="item-core" onclick="openColorPicker('core')">
+                        <div id="trigger-core" class="color-trigger" style="background: #ffaa33"></div>
+                        <div class="trigger-label">核心</div>
+                    </div>
+                    <div class="trigger-item" id="item-edge" onclick="openColorPicker('edge')">
+                        <div id="trigger-edge" class="color-trigger" style="background: #1b3984"></div>
+                        <div class="trigger-label">边缘</div>
+                    </div>
+
+                    <!-- 颜色面板 -->
+                    <div id="custom-color-picker">
+                        <div class="picker-header">
+                            <span id="picker-title">编辑颜色</span>
+                            <span class="picker-close" onclick="closeColorPicker(event)">✕</span>
+                        </div>
+                        
+                        <div class="picker-sl" id="picker-sl" onmousedown="startSlDrag(event)" ontouchstart="startSlDrag(event)">
+                            <div class="picker-sl-thumb" id="picker-sl-thumb"></div>
+                        </div>
+                        
+                        <div class="picker-hue" id="picker-hue" onmousedown="startHueDrag(event)" ontouchstart="startHueDrag(event)">
+                            <div class="picker-hue-thumb" id="picker-hue-thumb"></div>
+                        </div>
+
+                        <div class="picker-rgb">
+                            <div><input type="number" id="rgb-r" class="rgb-input" min="0" max="255"><div class="rgb-label">R</div></div>
+                            <div><input type="number" id="rgb-g" class="rgb-input" min="0" max="255"><div class="rgb-label">G</div></div>
+                            <div><input type="number" id="rgb-b" class="rgb-input" min="0" max="255"><div class="rgb-label">B</div></div>
+                        </div>
+
+                        <div class="picker-presets">
+                            <div class="preset-btn" style="background: #ffaa33" onclick="setSingleColor('#ffaa33')" title="金"></div>
+                            <div class="preset-btn" style="background: #00ffcc" onclick="setSingleColor('#00ffcc')" title="青"></div>
+                            <div class="preset-btn" style="background: #ff3300" onclick="setSingleColor('#ff3300')" title="红"></div>
+                            <div class="preset-btn" style="background: #bd00ff" onclick="setSingleColor('#bd00ff')" title="紫"></div>
+                            <div class="preset-btn" style="background: #0066ff" onclick="setSingleColor('#0066ff')" title="蓝"></div>
+                            <div class="preset-btn" style="background: #ffffff" onclick="setSingleColor('#ffffff')" title="白"></div>
+                            <div class="preset-btn" style="background: #000000" onclick="setSingleColor('#000000')" title="黑"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- 电脑版主页按钮 (手机版会移动位置) -->
+            <div class="divider" id="pc-divider-2"></div>
+            <!-- 主页按钮在JS中会被移动 -->
+        </div>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let scene, camera, renderer, composer, controls, particleSystem, material, bgParticles;
+        const count = 50000;
+        const mouse = new THREE.Vector2(-9999, -9999);
+        
+        window.isWebcamOn = false;
+        window.isTouchMode = false;
+        window.isWebcamLoading = false; // 摄像头加载锁
+        window.videoStream = null;
+        window.hands = null;
+        let handOpenness = 0, handX = 0, smoothedOpenness = 0;
+        let isDrawing = false, lastX = 0, lastY = 0;
+        const paintCanvas = document.getElementById('paint-canvas');
+        const ctx = paintCanvas.getContext('2d');
+
+        // --- DOM 操作辅助 ---
+        function checkMobileUI() {
+            const isMobile = window.innerWidth <= 850;
+            const btnImm = document.getElementById('btn-immersive');
+            const colorDock = document.getElementById('color-dock');
+            const mainBtns = document.getElementById('main-btns');
+            const mainDock = document.getElementById('main-dock');
+            const pcDivider = document.getElementById('pc-divider-2');
+            
+            // 获取需要改名的按钮
+            const btnTesseract = document.getElementById('btn-tesseract');
+            const btnMobius = document.getElementById('btn-mobius');
+            const btnWebcam = document.getElementById('btn-webcam');
+            const btnHomepage = document.getElementById('btn-homepage');
+            const btnCustom = document.getElementById('btn-custom'); // 获取隐藏的自定义按钮作为锚点
+
+            // 检查或创建手机端底部专用行容器
+            let mobileRow = document.getElementById('mobile-tools-row');
+            if (isMobile && !mobileRow) {
+                mobileRow = document.createElement('div');
+                mobileRow.id = 'mobile-tools-row';
+                mainDock.appendChild(mobileRow);
+            }
+
+            if (isMobile) {
+                // --- 手机版布局重组 ---
+                if (pcDivider) pcDivider.style.display = 'none';
+
+                // 1. 全屏按钮：移到右上角悬浮 (Mobile FAB)
+                if (btnImm.parentElement !== document.body) {
+                    document.body.appendChild(btnImm);
+                    btnImm.classList.add('mobile-fab-btn');
+                }
+                
+                // 2. 颜色、交互、主页：移入底部新行
+                if (colorDock.parentElement !== mobileRow) mobileRow.appendChild(colorDock);
+                if (btnWebcam.parentElement !== mobileRow) mobileRow.appendChild(btnWebcam);
+                if (btnHomepage.parentElement !== mobileRow) mobileRow.appendChild(btnHomepage);
+
+                // --- 手机版文案调整 ---
+                if(btnTesseract) btnTesseract.innerText = "四维";
+                if(btnMobius) btnMobius.innerText = "莫比乌斯"; // 恢复为"莫比乌斯"
+                const btnShore = document.getElementById('btn-shore');
+                if(btnShore) btnShore.innerText = "上岸";
+                if(btnWebcam) btnWebcam.innerText = "📷 交互"; 
+
+            } else {
+                // --- 电脑版布局还原 ---
+                if (pcDivider) pcDivider.style.display = 'block';
+
+                // 移除手机端专用行 (如果存在，先将元素移回原位再删除)
+                if (mobileRow) {
+                    // 移回主按钮组：交互按钮插在自定义按钮之前
+                    // 检查父子关系
+                    if (btnCustom.parentNode === mainBtns) {
+                        mainBtns.insertBefore(btnWebcam, btnCustom); 
+                    } else {
+                        mainBtns.appendChild(btnWebcam);
+                    }
+                    
+                    // 主页按钮放回Dock最后
+                    mainDock.appendChild(btnHomepage);
+                    
+                    // 颜色区域放回主Dock (插在pcDivider之前)
+                    if (pcDivider.parentNode === mainDock) {
+                        mainDock.insertBefore(colorDock, pcDivider);
+                    } else {
+                        mainDock.appendChild(colorDock);
+                    }
+                    
+                    mobileRow.remove();
+                }
+
+                // 全屏按钮放回 (插在自定义按钮之前)
+                if (btnImm.parentElement === document.body) {
+                    if (btnCustom.parentNode === mainBtns) {
+                        mainBtns.insertBefore(btnImm, btnCustom); 
+                    } else {
+                        mainBtns.appendChild(btnImm);
+                    }
+                    btnImm.classList.remove('mobile-fab-btn');
+                    btnImm.innerText = "⛶ 全屏";
+                }
+                
+                // PC端文字恢复
+                if(btnTesseract) btnTesseract.innerText = "四维投影";
+                if(btnMobius) btnMobius.innerText = "莫比乌斯";
+                const btnShore = document.getElementById('btn-shore');
+                if(btnShore) btnShore.innerText = "上岸";
+                if(btnWebcam) btnWebcam.innerText = window.isWebcamOn ? "📷 运行中" : "📷 手势控制";
+                // 确保主页按钮在PC端也存在于Dock末尾
+                if(btnHomepage.parentElement !== mainDock) {
+                    mainDock.appendChild(btnHomepage);
+                }
+            }
+        }
+
+        // --- 工具函数 ---
+        function bindEvent(id, event, handler) {
+            const el = document.getElementById(id);
+            if(el) el[event] = handler;
+        }
+
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+        }
+        function rgbToHex(r, g, b) {
+            return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+        }
+        function hslToHex(h, s, l) {
+            l /= 100; const a = s * Math.min(l, 1 - l) / 100;
+            const f = n => {
+                const k = (n + h / 30) % 12;
+                const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+                return Math.round(255 * color).toString(16).padStart(2, '0');
+            };
+            return `#${f(0)}${f(8)}${f(4)}`;
+        }
+
+        // --- 颜色逻辑 ---
+        let currentTarget = 'core';
+
+        window.openColorPicker = (target) => {
+            currentTarget = target;
+            document.getElementById('picker-title').innerText = target === 'core' ? '编辑核心颜色' : '编辑边缘颜色';
+            document.getElementById('custom-color-picker').classList.add('visible');
+            document.getElementById('item-core').classList.remove('active');
+            document.getElementById('item-edge').classList.remove('active');
+            document.getElementById('item-' + target).classList.add('active');
+        };
+
+        window.closeColorPicker = (e) => {
+            if(e) e.stopPropagation();
+            document.getElementById('custom-color-picker').classList.remove('visible');
+            document.getElementById('item-core').classList.remove('active');
+            document.getElementById('item-edge').classList.remove('active');
+        };
+
+        window.setSingleColor = (hex) => {
+            updateColor(hex);
+            const rgb = hexToRgb(hex);
+            if(rgb) {
+                document.getElementById('rgb-r').value = rgb.r;
+                document.getElementById('rgb-g').value = rgb.g;
+                document.getElementById('rgb-b').value = rgb.b;
+            }
+        };
+
+        function updateColor(hex) {
+            const trigger = document.getElementById('trigger-' + currentTarget);
+            if(trigger) trigger.style.background = hex;
+            if(material) {
+                if(currentTarget === 'core') material.uniforms.uColorInside.value.set(hex);
+                else material.uniforms.uColorOutside.value.set(hex);
+            }
+            if(currentTarget === 'edge' && bgParticles && bgParticles.material) {
+                bgParticles.material.uniforms.uColor.value.set(hex);
+            }
+        }
+
+        // 颜色拖拽
+        window.startHueDrag = (e) => {
+            const bar = document.getElementById('picker-hue');
+            const handleDrag = (ev) => {
+                ev.preventDefault();
+                const clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
+                const rect = bar.getBoundingClientRect();
+                let x = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+                document.getElementById('picker-hue-thumb').style.left = (x * 100) + '%';
+                const hex = hslToHex(x * 360, 100, 50);
+                document.getElementById('picker-sl').style.backgroundColor = hex;
+                updateColor(hex);
+            };
+            const stopDrag = () => {
+                window.removeEventListener('mousemove', handleDrag); window.removeEventListener('touchmove', handleDrag);
+                window.removeEventListener('mouseup', stopDrag); window.removeEventListener('touchend', stopDrag);
+            };
+            window.addEventListener('mousemove', handleDrag); window.addEventListener('touchmove', handleDrag, {passive:false});
+            window.addEventListener('mouseup', stopDrag); window.addEventListener('touchend', stopDrag);
+            handleDrag(e);
+        };
+        
+        window.startSlDrag = (e) => {
+            const box = document.getElementById('picker-sl');
+            const handleDrag = (ev) => {
+                ev.preventDefault();
+                const clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
+                const clientY = ev.touches ? ev.touches[0].clientY : ev.clientY;
+                const rect = box.getBoundingClientRect();
+                let x = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+                let y = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+                const thumb = document.getElementById('picker-sl-thumb');
+                thumb.style.left = (x * 100) + '%'; thumb.style.top = (y * 100) + '%';
+            };
+            const stopDrag = () => {
+                window.removeEventListener('mousemove', handleDrag); window.removeEventListener('touchmove', handleDrag);
+                window.removeEventListener('mouseup', stopDrag); window.removeEventListener('touchend', stopDrag);
+            };
+            window.addEventListener('mousemove', handleDrag); window.addEventListener('touchmove', handleDrag, {passive:false});
+            window.addEventListener('mouseup', stopDrag); window.addEventListener('touchend', stopDrag);
+            handleDrag(e);
+        };
+
+        const updateFromRGB = () => {
+            const r = Math.min(255, Math.max(0, parseInt(document.getElementById('rgb-r').value) || 0));
+            const g = Math.min(255, Math.max(0, parseInt(document.getElementById('rgb-g').value) || 0));
+            const b = Math.min(255, Math.max(0, parseInt(document.getElementById('rgb-b').value) || 0));
+            updateColor(rgbToHex(r,g,b));
+        };
+
+        // --- 初始化 ---
+        function init() {
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x020205, 0.002);
+            scene.background = new THREE.Color(0x020205);
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 45);
+
+            renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            document.addEventListener('mousemove', onDocumentMouseMove, false);
+            document.addEventListener('touchmove', onTouchSimulate, { passive: false });
+            document.addEventListener('click', (e) => {
+                const picker = document.getElementById('custom-color-picker');
+                const triggers = document.getElementById('color-dock'); 
+                if (picker && picker.classList.contains('visible')) {
+                    if(!picker.contains(e.target) && !triggers.contains(e.target)) {
+                        closeColorPicker();
+                    }
+                }
+            });
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.5;
+
+            const renderScene = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+            bloomPass.threshold = 0; bloomPass.strength = 1.2; bloomPass.radius = 0.5;
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene); composer.addPass(bloomPass);
+
+            createMainParticles();
+            createBackgroundParticles();
+            
+            setupUI();
+            checkMobileUI(); 
+            initDraggable(document.getElementById('webcam-container'));
+            
+            document.getElementById('loading').style.display = 'none';
+            if(window.isHandsLoaded) updateStatus("系统就绪", "#fff");
+            else updateStatus("等待 AI 组件...", "#aaa");
+            
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function setupUI() {
+            bindEvent('chaos-slider', 'oninput', (e) => material.uniforms.uChaos.value = parseFloat(e.target.value));
+            bindEvent('model-density-slider', 'oninput', (e) => { if(particleSystem) particleSystem.geometry.setDrawRange(0, parseInt(e.target.value)); });
+            bindEvent('spread-slider', 'oninput', (e) => { if(!window.isWebcamOn && !window.isTouchMode) material.uniforms.uSpread.value = parseFloat(e.target.value); });
+            bindEvent('rgb-r', 'oninput', updateFromRGB);
+            bindEvent('rgb-g', 'oninput', updateFromRGB);
+            bindEvent('rgb-b', 'oninput', updateFromRGB);
+        }
+
+        window.attemptWebcam = attemptWebcam;
+        window.toggleImmersive = toggleImmersive;
+        window.setMode = setMode;
+        window.clearCanvas = () => { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, paintCanvas.width, paintCanvas.height); };
+        window.openDrawingModal = () => { document.getElementById('drawing-modal').classList.add('visible'); setTimeout(initPaintCanvas, 50); window.clearCanvas(); };
+        window.closeModal = () => document.getElementById('drawing-modal').classList.remove('visible');
+
+        document.addEventListener('DOMContentLoaded', () => {
+            init();
+            animate();
+        });
+
+        // --- 功能函数 ---
+        function toggleImmersive() {
+            const ui = document.getElementById('ui');
+            const restoreBtn = document.getElementById('restore-ui-btn');
+            
+            if(ui.classList.contains('hidden')) {
+                ui.classList.remove('hidden');
+                // 恢复全屏时什么都不显示
+                if(document.exitFullscreen) document.exitFullscreen().catch(()=>{});
+            } else {
+                ui.classList.add('hidden');
+                // 进入全屏时不显示恢复按钮
+                if(document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(()=>{});
+            }
+        }
+
+        async function attemptWebcam() {
+            const btn = document.getElementById('btn-webcam');
+            const isMobile = window.innerWidth <= 850;
+            if (!window.isHandsLoaded) { alert("AI 组件尚未加载完成，请稍等几秒。"); return; }
+            
+            if (window.isWebcamLoading) return; // 防止重复点击
+
+            // 关闭逻辑：彻底清除流，防止卡死
+            if (window.isWebcamOn || window.isTouchMode) {
+                window.isWebcamLoading = true;
+                window.isWebcamOn = false; 
+                window.isTouchMode = false;
+                btn.classList.remove('active');
+                document.getElementById('webcam-container').style.display = 'none';
+                
+                // 停止所有轨道
+                if (window.videoStream) { 
+                    window.videoStream.getTracks().forEach(t => t.stop()); 
+                    window.videoStream = null; 
+                }
+                
+                // 关键：彻底重置 video 元素，解决移动端卡住问题
+                const video = document.getElementById('webcam-video');
+                video.pause();
+                video.srcObject = null;
+                // video.load() 移除，解决死循环问题
+
+                handOpenness = 0; handX = 0;
+                if(material) material.uniforms.uSpread.value = 0;
+                if(controls) controls.autoRotate = true;
+                
+                // 恢复文案
+                if (!isMobile) btn.innerText = "📷 手势控制";
+                if (isMobile) btn.innerText = "📷 交互";
+                
+                btn.style.boxShadow = ""; btn.style.color = ""; btn.style.borderColor = "";
+                updateStatus("摄像头已关闭", "#fff");
+                
+                window.isWebcamLoading = false;
+                return;
+            }
+
+            // 开启逻辑
+            window.isWebcamLoading = true;
+            btn.classList.add('active');
+            if(!isMobile) btn.innerText = "⏳ 请求中...";
+            if(isMobile) btn.innerText = "📷 交互"; // 保持文字不变
+            
+            updateStatus("正在请求摄像头...", "#00eaff");
+
+            const constraints = {
+                audio: false,
+                video: {
+                    facingMode: 'user', 
+                    ...(isMobile ? {} : { width: { ideal: 320 }, height: { ideal: 240 } })
+                }
+            };
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                window.videoStream = stream;
+                const video = document.getElementById('webcam-video');
+                video.srcObject = stream;
+                
+                document.getElementById('webcam-container').style.display = 'block';
+                
+                try {
+                    await video.play();
+                } catch(e) {
+                    console.warn("Auto-play failed", e);
+                }
+
+                // 不依赖 onloadedmetadata，直接标记完成
+                window.isWebcamOn = true; 
+                window.isWebcamLoading = false;
+                if(controls) controls.autoRotate = false;
+                if(!isMobile) btn.innerText = "📷 运行中";
+                if(isMobile) btn.innerText = "📷 交互";
+                
+                initMediaPipe();
+                updateStatus("摄像头已启动", "#00ffaa");
+
+            } catch (err) {
+                console.error("Webcam Error:", err);
+                window.isWebcamLoading = false;
+                if (confirm("摄像头启动失败(可能是权限或设备不支持)，是否切换到触屏手势模式？")) enableTouchSimMode();
+                else { 
+                    btn.classList.remove('active'); 
+                    if(!isMobile) btn.innerText = "📷 手势控制"; 
+                    if(isMobile) btn.innerText = "📷 交互";
+                    updateStatus("启动失败", "#ff5555"); 
+                }
+            }
+        }
+
+        function enableTouchSimMode() {
+            window.isTouchMode = true;
+            const btn = document.getElementById('btn-webcam');
+            btn.classList.add('active');
+            btn.style.boxShadow = "0 0 15px #00ffaa"; btn.style.color = "#00ffaa"; btn.style.borderColor = "#00ffaa";
+            const isMobile = window.innerWidth <= 850;
+            if (!isMobile) btn.innerText = "👆 触屏控制";
+            // 手机端文案保持不变
+            
+            if(controls) controls.autoRotate = false;
+            updateStatus("模式：触屏模拟", "#00ffaa");
+        }
+
+        function onTouchSimulate(e) {
+            if (!window.isTouchMode || e.touches.length > 1) return;
+            const t = e.touches[0];
+            handX = (t.clientX / window.innerWidth - 0.5) * 2.5;
+            handOpenness = Math.max(0, Math.min(1, (1.0 - t.clientY / window.innerHeight) * 1.2));
+            const ind = document.getElementById('touch-indicator');
+            ind.style.display = 'block';
+            ind.style.left = t.clientX + 'px'; ind.style.top = t.clientY + 'px';
+            ind.style.width = (40 + handOpenness * 30) + 'px'; ind.style.height = (40 + handOpenness * 30) + 'px';
+            clearTimeout(window.touchHideTimer);
+            window.touchHideTimer = setTimeout(() => ind.style.display = 'none', 200);
+        }
+
+        function initDraggable(el) {
+            let isDragging = false; let startX, startY, initialLeft, initialTop;
+            const onStart = (e) => {
+                if(e.target.id === 'webcam-video' || e.target.id === 'output-canvas' || e.target.id === 'webcam-container') {
+                    const evt = e.touches ? e.touches[0] : e;
+                    startX = evt.clientX; startY = evt.clientY;
+                    const rect = el.getBoundingClientRect();
+                    initialLeft = rect.left; initialTop = rect.top;
+                    
+                    el.style.bottom = 'auto'; el.style.right = 'auto';
+                    el.style.left = initialLeft + 'px'; el.style.top = initialTop + 'px';
+                    
+                    isDragging = true;
+                    el.style.cursor = 'grabbing';
+                }
+            };
+            const onMove = (e) => {
+                if (!isDragging) return; e.preventDefault(); 
+                const evt = e.touches ? e.touches[0] : e;
+                el.style.left = (initialLeft + evt.clientX - startX) + 'px'; el.style.top = (initialTop + evt.clientY - startY) + 'px';
+            };
+            const onEnd = () => { if (isDragging) { isDragging = false; el.style.cursor = 'move'; } };
+            el.addEventListener('mousedown', onStart); el.addEventListener('touchstart', onStart, {passive: false});
+            window.addEventListener('mousemove', onMove); window.addEventListener('touchmove', onMove, {passive: false});
+            window.addEventListener('mouseup', onEnd); window.addEventListener('touchend', onEnd);
+        }
+
+        function initPaintCanvas() {
+            const isMobile = window.innerWidth <= 850;
+            const wrapper = document.querySelector('.canvas-wrapper');
+            const dpr = window.devicePixelRatio || 1;
+            
+            let w = 1200, h = 800;
+            if (isMobile) {
+                const rect = wrapper.getBoundingClientRect();
+                w = rect.width; h = rect.height;
+            } else {
+                w = Math.min(1200, window.innerWidth * 0.95);
+                h = Math.min(800, window.innerHeight * 0.9);
+                wrapper.style.width = w + 'px'; wrapper.style.height = h + 'px';
+            }
+            
+            paintCanvas.width = w * dpr; paintCanvas.height = h * dpr;
+            paintCanvas.style.width = w + 'px'; paintCanvas.style.height = h + 'px';
+            
+            ctx.scale(dpr, dpr); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = isMobile ? 4 : 8; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+            paintCanvas.onmousedown = null; paintCanvas.ontouchstart = null;
+            const getPos = (e) => {
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                const rect = paintCanvas.getBoundingClientRect();
+                return [ clientX - rect.left, clientY - rect.top ];
+            };
+            const start = (e) => { if(e.type === 'touchstart') e.preventDefault(); isDrawing = true; [lastX, lastY] = getPos(e); };
+            const move = (e) => { if (!isDrawing) return; if(e.type === 'touchmove') e.preventDefault(); const [x, y] = getPos(e); ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(x, y); ctx.stroke(); [lastX, lastY] = [x, y]; };
+            const end = () => { isDrawing = false; };
+            paintCanvas.addEventListener('mousedown', start); paintCanvas.addEventListener('mousemove', move); paintCanvas.addEventListener('mouseup', end); paintCanvas.addEventListener('mouseleave', end);
+            paintCanvas.addEventListener('touchstart', start, {passive: false}); paintCanvas.addEventListener('touchmove', move, {passive: false}); paintCanvas.addEventListener('touchend', end);
+        }
+
+        window.confirmDrawing = () => {
+             const w = paintCanvas.width; const h = paintCanvas.height;
+             const data = ctx.getImageData(0, 0, w, h).data;
+             const points = []; const step = 4;
+             for(let y=0; y<h; y+=step) { for(let x=0; x<w; x+=step) { const idx = (y*w + x) * 4; if(data[idx] > 30) points.push({ x: (x/w - 0.5) * 40, y: -(y/h - 0.5) * 26 * (h/w), z: Math.sin(x/w * Math.PI * 4) * 2.0 }); } }
+             if(points.length === 0) { alert("请先画点东西！"); return; }
+             const attr = particleSystem.geometry.attributes.targetCustom.array;
+             for(let i=0; i<count; i++) {
+                 const p = points[Math.floor(Math.random() * points.length)];
+                 const i3 = i*3; attr[i3] = p.x + (Math.random()-0.5)*0.5; attr[i3+1] = p.y + (Math.random()-0.5)*0.5; attr[i3+2] = p.z + (Math.random()-0.5)*0.5;
+             }
+             particleSystem.geometry.attributes.targetCustom.needsUpdate = true;
+             setMode('custom'); closeModal();
+        };
+
+        async function initMediaPipe() {
+            if (window.hands) {
+                detectLoop(); // Ensure loop restarts on subsequent opens
+                return;
+            }
+            try {
+                window.hands = new window.Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+                window.hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+                window.hands.onResults(onHandResults);
+                detectLoop();
+            } catch (e) { console.log("AI Init Error", e); }
+        }
+
+        function onHandResults(results) {
+            const canvas = document.getElementById('output-canvas');
+            const ctx = canvas.getContext('2d');
+            const video = document.getElementById('webcam-video');
+            if (canvas.width !== video.videoWidth) { canvas.width = video.videoWidth; canvas.height = video.videoHeight; }
+            ctx.save(); ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00eaff', lineWidth: 2});
+                drawLandmarks(ctx, landmarks, {color: '#ffaa33', lineWidth: 1, radius: 2});
+                const wrist = landmarks[0]; const tip = landmarks[9];
+                const palmLen = Math.hypot(wrist.x - tip.x, wrist.y - tip.y);
+                let tipsDist = 0; [4,8,12,16,20].forEach(i => tipsDist += Math.hypot(wrist.x - landmarks[i].x, wrist.y - landmarks[i].y));
+                const ratio = (tipsDist / 5) / palmLen;
+                handOpenness = Math.max(0, Math.min(1, (ratio - 1.0) / 0.8));
+                handX = (tip.x - 0.5) * 2; 
+                updateStatus("🟢 捕捉中", "#00ffaa");
+            } else {
+                handOpenness *= 0.9; handX *= 0.9;
+                updateStatus("🟡 搜索手势...", "#ffee00");
+            }
+            ctx.restore();
+        }
+
+        async function detectLoop() {
+            const video = document.getElementById('webcam-video');
+            if (window.isWebcamOn && video.paused) { try { await video.play(); } catch(e) {} }
+            if (window.isWebcamOn) {
+                try { if(window.hands && video.readyState >= 2) await window.hands.send({image: video}); } catch(e) { console.warn("Detection skipped frame", e); }
+                requestAnimationFrame(detectLoop);
+            }
+        }
+
+        function setMode(mode) {
+            document.querySelectorAll('.shape-btn').forEach(b => { if(b.id !== 'btn-webcam' && b.id !== 'btn-immersive') b.classList.remove('active'); });
+            document.getElementById('btn-'+mode).classList.add('active');
+            material.uniforms.uWeightGalaxy.value = 0; material.uniforms.uWeightTesseract.value = 0; material.uniforms.uWeightMobius.value = 0; material.uniforms.uWeightShore.value = 0; material.uniforms.uWeightCustom.value = 0;
+            if(mode==='galaxy') material.uniforms.uWeightGalaxy.value = 1;
+            if(mode==='tesseract') material.uniforms.uWeightTesseract.value = 1;
+            if(mode==='mobius') material.uniforms.uWeightMobius.value = 1;
+            if(mode==='shore') material.uniforms.uWeightShore.value = 1;
+            if(mode==='custom') material.uniforms.uWeightCustom.value = 1;
+        }
+
+        function onDocumentMouseMove(event) { mouse.x = (event.clientX/window.innerWidth)*2-1; mouse.y = -(event.clientY/window.innerHeight)*2+1; }
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight); composer.setSize(window.innerWidth, window.innerHeight);
+            if(material) material.uniforms.uPixelRatio.value = renderer.getPixelRatio();
+            checkMobileUI();
+        }
+
+        function createMainParticles() {
+            const geometry = new THREE.BufferGeometry();
+            const posArray = new Float32Array(count * 3);
+            const targetGalaxy = new Float32Array(count * 3);
+            const targetTesseract = new Float32Array(count * 3);
+            const targetMobius = new Float32Array(count * 3);
+            const targetShore = new Float32Array(count * 3);
+            const targetCustom = new Float32Array(count * 3); 
+            const mixRatios = new Float32Array(count); 
+            const sizes = new Float32Array(count);
+            const randomness = new Float32Array(count * 3);
+
+            for(let i = 0; i < count; i++) {
+                const i3 = i * 3;
+                const r = Math.random() * 20; const spin = r * 0.8; const branch = (i % 3) * ((Math.PI * 2) / 3);
+                targetGalaxy[i3] = Math.cos(branch + spin) * r + (Math.random()-0.5)*r*0.5; targetGalaxy[i3+1] = (Math.random()-0.5) * r * 0.5; targetGalaxy[i3+2] = Math.sin(branch + spin) * r + (Math.random()-0.5)*r*0.5;
+                const axis = Math.floor(Math.random() * 4);
+                let x = (Math.random()-0.5)*2; let y = (Math.random()-0.5)*2; let z = (Math.random()-0.5)*2; let w = (Math.random()-0.5)*2;
+                if(Math.random() > 0.05) { if(axis===0) { y=Math.round(y); z=Math.round(z); w=Math.round(w); } else if(axis===1) { x=Math.round(x); z=Math.round(z); w=Math.round(w); } else if(axis===2) { x=Math.round(x); y=Math.round(y); w=Math.round(w); } else { x=Math.round(x); y=Math.round(y); z=Math.round(z); } }
+                const rot = 0.8; let xw = x*Math.cos(rot) - w*Math.sin(rot); let ww = x*Math.sin(rot) + w*Math.cos(rot); x = xw; w = ww;
+                const scale = 12.0; const proj = scale / (3.0 - w); const tScatter = (Math.random() - 0.5) * 0.3; 
+                targetTesseract[i3] = x * proj + tScatter; targetTesseract[i3+1] = y * proj + tScatter; targetTesseract[i3+2] = z * proj + tScatter;
+                const mt = Math.random() * Math.PI * 2; const ms = (Math.random() - 0.5) * 5.0; const mR = 12.0; 
+                const mX = (mR + ms * Math.cos(mt/2)) * Math.cos(mt); const mY = (mR + ms * Math.cos(mt/2)) * Math.sin(mt); const mZ = ms * Math.sin(mt/2);
+                const mobiusScatter = (Math.random() - 0.5) * 3.0 * Math.pow(Math.random(), 2);
+                targetMobius[i3] = mX + mobiusScatter; targetMobius[i3+1] = mY + mobiusScatter; targetMobius[i3+2] = mZ + mobiusScatter;
+                // 上岸模式：从底部向上扩散的波浪效果
+                const shoreAngle = Math.random() * Math.PI * 2;
+                const shoreRadius = Math.random() * 15;
+                const shoreHeight = Math.pow(Math.random(), 1.5) * 20 - 10; // 从底部(-10)向上扩散
+                const waveOffset = Math.sin(shoreAngle * 3) * 2; // 波浪效果
+                targetShore[i3] = Math.cos(shoreAngle) * shoreRadius + waveOffset;
+                targetShore[i3+1] = shoreHeight;
+                targetShore[i3+2] = Math.sin(shoreAngle) * shoreRadius + waveOffset;
+                targetCustom[i3] = targetGalaxy[i3]; targetCustom[i3+1] = targetGalaxy[i3+1]; targetCustom[i3+2] = targetGalaxy[i3+2];
+                mixRatios[i] = Math.min(r / 20, 1.0); sizes[i] = Math.random();
+                randomness[i3] = (Math.random()-0.5) * 2; randomness[i3+1] = (Math.random()-0.5) * 2; randomness[i3+2] = (Math.random()-0.5) * 2;
+            }
+            geometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+            geometry.setAttribute('targetGalaxy', new THREE.BufferAttribute(targetGalaxy, 3));
+            geometry.setAttribute('targetTesseract', new THREE.BufferAttribute(targetTesseract, 3));
+            geometry.setAttribute('targetMobius', new THREE.BufferAttribute(targetMobius, 3));
+            geometry.setAttribute('targetShore', new THREE.BufferAttribute(targetShore, 3));
+            geometry.setAttribute('targetCustom', new THREE.BufferAttribute(targetCustom, 3));
+            geometry.setAttribute('mixRatio', new THREE.BufferAttribute(mixRatios, 1));
+            geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+            geometry.setAttribute('randomness', new THREE.BufferAttribute(randomness, 3));
+
+            material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uWeightGalaxy: { value: 1.0 }, uWeightTesseract: { value: 0.0 }, uWeightMobius: { value: 0.0 }, uWeightShore: { value: 0.0 }, uWeightCustom: { value: 0.0 },
+                    uChaos: { value: 0 }, uSpread: { value: 0.0 }, 
+                    uPixelRatio: { value: renderer.getPixelRatio() },
+                    uColorInside: { value: new THREE.Color(0xffaa33) },
+                    uColorOutside: { value: new THREE.Color(0x1b3984) },
+                    uMouseWorld: { value: new THREE.Vector3(0, 0, 0) }
+                },
+                vertexShader: `
+                    uniform float uTime; uniform float uWeightGalaxy; uniform float uWeightTesseract; uniform float uWeightMobius; uniform float uWeightShore; uniform float uWeightCustom;
+                    uniform float uChaos; uniform float uSpread; uniform float uPixelRatio; uniform vec3 uColorInside; uniform vec3 uColorOutside; uniform vec3 uMouseWorld;
+                    attribute vec3 targetGalaxy; attribute vec3 targetTesseract; attribute vec3 targetMobius; attribute vec3 targetShore; attribute vec3 targetCustom;
+                    attribute float mixRatio; attribute float size; attribute vec3 randomness;
+                    varying vec3 vColor;
+                    vec3 getNoise(vec3 p) { return vec3(sin(p.y+uTime), sin(p.z+uTime), sin(p.x+uTime)); }
+                    void main() {
+                        vColor = mix(uColorInside, uColorOutside, mixRatio);
+                        vec3 pos = targetGalaxy * uWeightGalaxy + targetTesseract * uWeightTesseract + targetMobius * uWeightMobius + targetShore * uWeightShore + targetCustom * uWeightCustom;
+                        // 上岸模式：添加波浪动画
+                        if (uWeightShore > 0.5) {
+                            pos.y += sin(pos.x * 0.3 + uTime * 2.0) * 1.5 + sin(pos.z * 0.3 + uTime * 1.5) * 1.0;
+                        }
+                        float spreadDist = length(randomness);
+                        vec3 spreadOffset = randomness * pow(spreadDist, 4.0) * uSpread * 10.0; 
+                        pos += spreadOffset;
+                        vec3 noise = getNoise(pos * 0.1) * 5.0;
+                        vec3 chaosPos = pos + (randomness * 30.0 + noise) * uChaos;
+                        vec3 finalPos = mix(pos, chaosPos, uChaos);
+                        finalPos += normal * sin(uTime * 2.0) * 0.1;
+                        
+                        // 交互
+                        float dist = distance(finalPos.xy, uMouseWorld.xy);
+                        if (dist < 8.0) {
+                            float strength = pow((1.0 - dist / 8.0), 2.0);
+                            vec3 pushDir = normalize(finalPos - vec3(uMouseWorld.xy, finalPos.z));
+                            finalPos += pushDir * strength * 2.0;
+                            float angle = strength * 3.0; 
+                            float s = sin(angle); float c = cos(angle);
+                            vec2 relPos = finalPos.xy - uMouseWorld.xy;
+                            finalPos.xy = uMouseWorld.xy + vec2(relPos.x * c - relPos.y * s, relPos.x * s + relPos.y * c);
+                        }
+                        vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
+                        gl_Position = projectionMatrix * mvPosition;
+                        gl_PointSize = size * uPixelRatio * (150.0 / -mvPosition.z);
+                    }
+                `,
+                fragmentShader: `varying vec3 vColor; void main() { float d = distance(gl_PointCoord, vec2(0.5)); if(d > 0.5) discard; float alpha = pow(1.0 - smoothstep(0.0, 0.5, d), 3.0); gl_FragColor = vec4(vColor, alpha); }`,
+                transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+            });
+            particleSystem = new THREE.Points(geometry, material);
+            scene.add(particleSystem);
+        }
+
+        function createBackgroundParticles() {
+            const bgCount = 30000; const bgGeo = new THREE.BufferGeometry();
+            const bgPos = new Float32Array(bgCount * 3); const bgSizes = new Float32Array(bgCount);
+            for(let i=0; i<bgCount; i++) {
+                const r = 70 + Math.random() * 150; const theta = Math.random() * Math.PI * 2; const phi = Math.acos(2 * Math.random() - 1);
+                bgPos[i*3] = r * Math.sin(phi) * Math.cos(theta); bgPos[i*3+1] = r * Math.sin(phi) * Math.sin(theta); bgPos[i*3+2] = r * Math.cos(phi); bgSizes[i] = Math.random();
+            }
+            bgGeo.setAttribute('position', new THREE.BufferAttribute(bgPos, 3)); bgGeo.setAttribute('size', new THREE.BufferAttribute(bgSizes, 1));
+            const bgMat = new THREE.ShaderMaterial({
+                uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(0x1b3984) }, uPixelRatio: { value: renderer.getPixelRatio() } },
+                vertexShader: `uniform float uTime; uniform float uPixelRatio; attribute float size; void main() { vec3 pos = position; float angle = uTime * 0.05; float s = sin(angle); float c = cos(angle); mat3 rot = mat3(c, 0, s, 0, 1, 0, -s, 0, c); vec4 mv = modelViewMatrix * vec4(pos * rot, 1.0); gl_Position = projectionMatrix * mv; gl_PointSize = size * 3.0 * uPixelRatio * (200.0 / -mv.z); }`,
+                fragmentShader: `uniform vec3 uColor; void main() { float d = distance(gl_PointCoord, vec2(0.5)); if(d > 0.5) discard; gl_FragColor = vec4(uColor, 0.3 * (1.0 - d*2.0)); }`,
+                transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+            });
+            bgParticles = { mesh: new THREE.Points(bgGeo, bgMat), material: bgMat };
+            scene.add(bgParticles.mesh);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = performance.now() * 0.001;
+            if (window.isWebcamOn || window.isTouchMode) {
+                smoothedOpenness += (handOpenness - smoothedOpenness) * 0.1;
+                if(material) {
+                    material.uniforms.uSpread.value = smoothedOpenness * 1.5;
+                    material.uniforms.uChaos.value = smoothedOpenness * 0.5;
+                }
+                document.getElementById('spread-slider').value = smoothedOpenness * 1.5;
+                document.getElementById('chaos-slider').value = smoothedOpenness * 0.5;
+                if (Math.abs(handX) > 0.15) {
+                    particleSystem.rotation.y += handX * 0.03;
+                    if(controls) controls.autoRotate = false;
+                }
+            }
+            if(material) {
+                const vector = new THREE.Vector3(mouse.x, mouse.y, 0.5); vector.unproject(camera);
+                const dir = vector.sub(camera.position).normalize();
+                material.uniforms.uMouseWorld.value.copy(camera.position.clone().add(dir.multiplyScalar(-camera.position.z / dir.z)));
+                material.uniforms.uTime.value = time;
+            }
+            if(bgParticles) {
+                bgParticles.material.uniforms.uTime.value = time;
+                bgParticles.mesh.rotation.y = time * 0.02;
+            }
+            controls.update(); composer.render();
+        }
+    </script>
+</body>
+</html>
