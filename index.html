@@ -1437,16 +1437,6 @@
                 }
             }
             if (material) {
-                // 描线动画：根据时间增减 uDrawProgress
-                if (isDrawAnim && material.uniforms && material.uniforms.uDrawProgress) {
-                    const speed = 0.4; // 每秒完整描/擦一次
-                    let p = material.uniforms.uDrawProgress.value;
-                    p += drawDirection * speed * delta;
-                    if (p <= 0.0) { p = 0.0; drawDirection = 1; }
-                    if (p >= 1.0) { p = 1.0; drawDirection = -1; }
-                    material.uniforms.uDrawProgress.value = p;
-                }
-
                 const vector = new THREE.Vector3(mouse.x, mouse.y, 0.5); vector.unproject(camera);
                 const dir = vector.sub(camera.position).normalize();
                 material.uniforms.uMouseWorld.value.copy(camera.position.clone().add(dir.multiplyScalar(-camera.position.z / dir.z)));
