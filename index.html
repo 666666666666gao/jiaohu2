@@ -432,9 +432,6 @@
         window.videoStream = null;
         window.hands = null;
         let handOpenness = 0, handX = 0, smoothedOpenness = 0;
-        // 手势高级交互状态
-        const gestureModes = ['shore', 'galaxy', 'tesseract', 'mobius', 'image', 'custom'];
-        let currentGestureModeIndex = 0;
         const colorThemes = [
             { inside: '#ffaa33', outside: '#1b3984', bg: '#1b3984' }, // 默认金橙+深蓝
             { inside: '#00ffcc', outside: '#0044ff', bg: '#002255' }, // 青绿霓虹
@@ -442,10 +439,8 @@
             { inside: '#bd00ff', outside: '#330066', bg: '#110022' }  // 紫色赛博
         ];
         let currentThemeIndex = 0;
-        let lastGestureModeTime = 0;
         let lastGestureColorTime = 0;
-        let lastGestureHandX = 0;
-        let lastGestureState = 'idle'; // 'idle' | 'closed' | 'open'
+        let oneGestureActive = false;
         let isDrawing = false, lastX = 0, lastY = 0;
         const paintCanvas = document.getElementById('paint-canvas');
         const ctx = paintCanvas.getContext('2d');
@@ -1000,16 +995,6 @@
             if (edge) edge.style.background = theme.outside;
         }
 
-        function cycleGestureMode() {
-            const now = performance.now();
-            if (now - lastGestureModeTime < 700) return; // 手势冷却
-            lastGestureModeTime = now;
-            currentGestureModeIndex = (currentGestureModeIndex + 1) % gestureModes.length;
-            const mode = gestureModes[currentGestureModeIndex];
-            setMode(mode);
-            updateStatus(`手势：切换形态 → ${mode === 'shore' ? '上岸' : mode}`, '#00ffaa');
-        }
-
         function cycleColorTheme() {
             const now = performance.now();
             if (now - lastGestureColorTime < 700) return;
@@ -1019,21 +1004,25 @@
             updateStatus('手势：切换主题配色', '#00eaff');
         }
 
-        function updateGestureState() {
-            const now = performance.now();
-            const open = handOpenness;
-            // 简单状态机：检测“握拳→张开”的瞬间作为模式切换手势
-            if (open < 0.25) {
-                lastGestureState = 'closed';
-            } else if (open > 0.75 && lastGestureState === 'closed') {
-                lastGestureState = 'open';
-                cycleGestureMode();
-            }
-            // 检测快速水平挥动，用于切换主题颜色
-            const dx = handX - lastGestureHandX;
-            lastGestureHandX = handX;
-            if (Math.abs(dx) > 0.55 && open > 0.5) {
+        function isFingerUp(landmarks, tipIndex, pipIndex) {
+            return landmarks[tipIndex].y < landmarks[pipIndex].y - 0.02;
+        }
+
+        function detectOneGesture(landmarks) {
+            const indexUp = isFingerUp(landmarks, 8, 6);
+            const middleUp = isFingerUp(landmarks, 12, 10);
+            const ringUp = isFingerUp(landmarks, 16, 14);
+            const pinkyUp = isFingerUp(landmarks, 20, 18);
+            return indexUp && !middleUp && !ringUp && !pinkyUp;
+        }
+
+        function handleColorGesture(landmarks) {
+            const gesture = detectOneGesture(landmarks);
+            if (gesture && !oneGestureActive) {
+                oneGestureActive = true;
                 cycleColorTheme();
+            } else if (!gesture) {
+                oneGestureActive = false;
             }
         }
 
@@ -1053,7 +1042,7 @@
                 const ratio = (tipsDist / 5) / palmLen;
                 handOpenness = Math.max(0, Math.min(1, (ratio - 1.0) / 0.8));
                 handX = (tip.x - 0.5) * 2; 
-                updateGestureState();
+                handleColorGesture(landmarks);
                 updateStatus("🟢 捕捉中", "#00ffaa");
             } else {
                 // 如果没有检测到手势，保持当前值，不衰减（保持初始扩散状态）
