@@ -37,6 +37,13 @@
             background: rgba(0,0,0,0.6); padding: 6px 12px; border-radius: 20px; z-index: 200; pointer-events: none;
             border: 1px solid rgba(255,255,255,0.1); transition: color 0.3s;
         }
+        #gesture-status {
+            position: fixed; top: 36px; left: 10px; color: #888; font-size: 11px;
+            background: rgba(0,0,0,0.45); padding: 4px 10px; border-radius: 16px;
+            z-index: 200; pointer-events: none;
+            border: 1px solid rgba(255,255,255,0.08);
+            font-family: monospace;
+        }
 
         #loading { position: absolute; inset: 0; background: #000; z-index: 100; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #00eaff; transition: opacity 0.5s; pointer-events: none; }
 
@@ -300,6 +307,7 @@
 <body>
 
     <div id="system-status">正在初始化...</div>
+    <div id="gesture-status">Gesture: idle</div>
 
     <div id="loading">
         <h2 style="font-weight:300; letter-spacing:4px; font-size: 20px;">SYSTEM LOADING</h2>
@@ -360,6 +368,7 @@
                     <input type="range" id="spread-slider" min="0" max="2.0" step="0.01" value="1.5">
                 </div>
             </div>
+            <div class="divider"></div>
             <div class="divider"></div>
             <div class="color-dock-section" id="color-dock">
                 <div class="trigger-group">
@@ -444,13 +453,8 @@
         ];
         let currentThemeIndex = 0;
         let lastGestureColorTime = 0;
-        let breathState = 'idle'; // idle | closed | open
-        let lastBreathTime = 0;
-        let isTimelineActive = false;
-        let timelineT = 0.0; // 0 线稿 → 0.5 雕塑 → 1 星空
-        let energyBurstEndTime = 0;
-        let lastMagicTime = 0;
-        let lastTipX = 0, lastTipY = 0;
+        let currentMode = 'shore';
+        let oneGestureActive = false;
         let bloomPass = null;
         let isDrawing = false, lastX = 0, lastY = 0;
         const paintCanvas = document.getElementById('paint-canvas');
@@ -1006,39 +1010,45 @@
             if (edge) edge.style.background = theme.outside;
         }
 
+        // 风格/描线功能已移除，相关按钮也隐藏
+
+        function updateGestureHUD(extra) {
+            const hud = document.getElementById('gesture-status');
+            if (!hud) return;
+            const handText = extra && extra.noHand ? 'none' : (extra && extra.state) || 'tracking';
+            hud.textContent = `Hand: ${handText} | Mode: ${currentMode} | Theme: ${currentThemeIndex+1}/${colorThemes.length}`;
+        }
+
         function cycleColorTheme() {
             const now = performance.now();
-            if (now - lastGestureColorTime < 700) return;
+            if (now - lastGestureColorTime < 400) return;
             lastGestureColorTime = now;
             currentThemeIndex = (currentThemeIndex + 1) % colorThemes.length;
             applyColorTheme(currentThemeIndex);
-            updateStatus('呼吸：切换主题配色', '#00eaff');
+            updateStatus('配色：切换主题', '#00eaff');
         }
 
         function isFingerUp(landmarks, tipIndex, pipIndex) {
-            return landmarks[tipIndex].y < landmarks[pipIndex].y - 0.015;
+            return landmarks[tipIndex].y < landmarks[pipIndex].y - 0.02;
         }
 
-        function detectTwoFingerTimelineGesture(landmarks) {
+        // 单指配色：食指抬起，其他手指弯曲
+        function detectOneFingerColorGesture(landmarks) {
             const indexUp = isFingerUp(landmarks, 8, 6);
             const middleUp = isFingerUp(landmarks, 12, 10);
-            // 更宽松的剪刀手：只要食指+中指明显伸直即可
-            return indexUp && middleUp;
+            const ringUp = isFingerUp(landmarks, 16, 14);
+            const pinkyUp = isFingerUp(landmarks, 20, 18);
+            return indexUp && !middleUp && !ringUp && !pinkyUp;
         }
 
-        function handleTimelineGesture(landmarks) {
-            const active = detectTwoFingerTimelineGesture(landmarks);
-            if (!active) {
-                isTimelineActive = false;
-                return;
+        function handleColorGesture(landmarks) {
+            const gesture = detectOneFingerColorGesture(landmarks);
+            if (gesture && !oneGestureActive) {
+                oneGestureActive = true;
+                cycleColorTheme(); // 伸直一次换一次色
+            } else if (!gesture) {
+                oneGestureActive = false; // 必须先放下再伸起，才会再次触发
             }
-            isTimelineActive = true;
-            // 使用食指与中指平均 X 作为时间线控制
-            const xIndex = landmarks[8].x;
-            const xMiddle = landmarks[12].x;
-            const xAvg = (xIndex + xMiddle) * 0.5;
-            // 映射到 [0,1]
-            timelineT = Math.max(0, Math.min(1, xAvg));
         }
 
         function onHandResults(results) {
@@ -1059,49 +1069,17 @@
                 handX = (tip.x - 0.5) * 2; 
                 handY = (tip.y - 0.5) * 2;
 
-                // 呼吸触发配色：一次收缩→张开
-                const now = performance.now();
-                if (handOpenness < 0.25) {
-                    breathState = 'closed';
-                } else if (handOpenness > 0.75 && breathState === 'closed') {
-                    breathState = 'open';
-                    if (now - lastBreathTime > 800) {
-                        lastBreathTime = now;
-                        cycleColorTheme();
-                    }
-                }
-
-                handleTimelineGesture(mainHand);
-
-                // 奇异博士式能量手势：张开手掌，快速画圈
-                const tipPrevX = lastTipX;
-                const tipPrevY = lastTipY;
-                lastTipX = tip.x;
-                lastTipY = tip.y;
-                const vx = tip.x - tipPrevX;
-                const vy = tip.y - tipPrevY;
-                const speed = Math.hypot(vx, vy);
-                const openPalm =
-                    isFingerUp(mainHand, 8, 6) &&
-                    isFingerUp(mainHand, 12, 10) &&
-                    isFingerUp(mainHand, 16, 14) &&
-                    isFingerUp(mainHand, 20, 18);
-                const nearCenter = Math.abs(tip.x - 0.5) < 0.25 && Math.abs(tip.y - 0.5) < 0.25;
-                if (openPalm && nearCenter && speed > 0.06) {
-                    const tSec = performance.now() * 0.001;
-                    if (tSec - lastMagicTime > 1.2) { // 冷却
-                        lastMagicTime = tSec;
-                        energyBurstEndTime = tSec + 1.2;
-                        updateStatus("✨ 魔法能量收束", "#ffdd55");
-                    }
-                }
+                // 单指手势：伸出一只食指即可切换一次配色
+                handleColorGesture(mainHand);
 
                 updateStatus("🟢 捕捉中", "#00ffaa");
+                updateGestureHUD({ state: 'tracking' });
             } else {
                 // 如果没有检测到手势，保持当前值，不衰减（保持初始扩散状态）
                 // handOpenness 保持当前值，不衰减
                 handX *= 0.9;
                 updateStatus("🟡 搜索手势...", "#ffee00");
+                updateGestureHUD({ noHand: true });
             }
             ctx.restore();
         }
@@ -1115,16 +1093,28 @@
             }
         }
 
-        function setMode(mode) {
-            document.querySelectorAll('.shape-btn').forEach(b => { if(b.id !== 'btn-webcam' && b.id !== 'btn-immersive') b.classList.remove('active'); });
-            document.getElementById('btn-'+mode).classList.add('active');
-            material.uniforms.uWeightGalaxy.value = 0; material.uniforms.uWeightTesseract.value = 0; material.uniforms.uWeightMobius.value = 0; material.uniforms.uWeightShore.value = 0; material.uniforms.uWeightImage.value = 0; material.uniforms.uWeightCustom.value = 0;
+        function applyModeWeights(mode) {
+            if (!material) return;
+            material.uniforms.uWeightGalaxy.value = 0;
+            material.uniforms.uWeightTesseract.value = 0;
+            material.uniforms.uWeightMobius.value = 0;
+            material.uniforms.uWeightShore.value = 0;
+            material.uniforms.uWeightImage.value = 0;
+            material.uniforms.uWeightCustom.value = 0;
             if(mode==='galaxy') material.uniforms.uWeightGalaxy.value = 1;
             if(mode==='tesseract') material.uniforms.uWeightTesseract.value = 1;
             if(mode==='mobius') material.uniforms.uWeightMobius.value = 1;
             if(mode==='shore') material.uniforms.uWeightShore.value = 1;
             if(mode==='image') material.uniforms.uWeightImage.value = 1;
             if(mode==='custom') material.uniforms.uWeightCustom.value = 1;
+        }
+
+        function setMode(mode) {
+            document.querySelectorAll('.shape-btn').forEach(b => { if(b.id !== 'btn-webcam' && b.id !== 'btn-immersive') b.classList.remove('active'); });
+            const btn = document.getElementById('btn-'+mode);
+            if (btn) btn.classList.add('active');
+            currentMode = mode;
+            applyModeWeights(mode);
         }
 
         function onDocumentMouseMove(event) { mouse.x = (event.clientX/window.innerWidth)*2-1; mouse.y = -(event.clientY/window.innerHeight)*2+1; }
@@ -1446,35 +1436,15 @@
                     particleSystem.rotation.x += handY * 0.02;
                 }
             }
-            if(material) {
-                // 时间线手势混合形态：线稿 → 雕塑 → 星云
-                if (isTimelineActive) {
-                    const t = timelineT;
-                    let wImage = 0, wMobius = 0, wGalaxy = 0;
-                    if (t < 0.5) {
-                        const k = t / 0.5;
-                        wImage = 1.0 - k;
-                        wMobius = k;
-                    } else {
-                        const k = (t - 0.5) / 0.5;
-                        wMobius = 1.0 - k;
-                        wGalaxy = k;
-                    }
-                    material.uniforms.uWeightImage.value = wImage;
-                    material.uniforms.uWeightMobius.value = wMobius;
-                    material.uniforms.uWeightGalaxy.value = wGalaxy;
-                    material.uniforms.uWeightShore.value = 0.0;
-                    material.uniforms.uWeightTesseract.value = 0.0;
-                    material.uniforms.uWeightCustom.value = 0.0;
-                }
-
-                // 能量收束特效：短时间增强亮度与扰动
-                if (energyBurstEndTime > time && bloomPass) {
-                    const phase = (energyBurstEndTime - time); // 0..1
-                    bloomPass.strength = 1.2 + phase * 1.8;
-                    material.uniforms.uChaos.value = 0.8 * phase;
-                } else if (bloomPass) {
-                    bloomPass.strength = 1.2;
+            if (material) {
+                // 描线动画：根据时间增减 uDrawProgress
+                if (isDrawAnim && material.uniforms && material.uniforms.uDrawProgress) {
+                    const speed = 0.4; // 每秒完整描/擦一次
+                    let p = material.uniforms.uDrawProgress.value;
+                    p += drawDirection * speed * delta;
+                    if (p <= 0.0) { p = 0.0; drawDirection = 1; }
+                    if (p >= 1.0) { p = 1.0; drawDirection = -1; }
+                    material.uniforms.uDrawProgress.value = p;
                 }
 
                 const vector = new THREE.Vector3(mouse.x, mouse.y, 0.5); vector.unproject(camera);
