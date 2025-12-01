@@ -331,10 +331,10 @@
     <div id="ui">
         <div class="dock-panel" id="main-dock">
             <div class="btn-group" id="main-btns">
-                <button id="btn-galaxy" class="shape-btn active" onclick="setMode('galaxy')">星云</button>
+                <button id="btn-shore" class="shape-btn active" onclick="setMode('shore')">上岸</button>
+                <button id="btn-galaxy" class="shape-btn" onclick="setMode('galaxy')">星云</button>
                 <button id="btn-tesseract" class="shape-btn" onclick="setMode('tesseract')">四维投影</button>
                 <button id="btn-mobius" class="shape-btn" onclick="setMode('mobius')">莫比乌斯</button>
-                <button id="btn-shore" class="shape-btn" onclick="setMode('shore')">上岸</button>
                 <button id="btn-draw" class="shape-btn" onclick="openDrawingModal()">🖌️ 手绘</button>
                 <button id="btn-webcam" class="shape-btn" onclick="attemptWebcam()">📷 手势控制</button>
                 <button id="btn-immersive" class="shape-btn" onclick="toggleImmersive()">⛶ 全屏</button>
@@ -1004,7 +1004,7 @@
             
             // 绘制文字
             ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 200px "Microsoft YaHei", "微软雅黑", "SimHei", "黑体", sans-serif';
+            ctx.font = 'bold 280px "KaiTi", "楷体", "STKaiti", "华文楷体", serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText('上岸', width / 2, height / 2);
@@ -1020,8 +1020,8 @@
                     const idx = (y * width + x) * 4;
                     if (data[idx] > 30) { // 如果像素是白色（文字部分）
                         // 转换为3D坐标
-                        const px = (x / width - 0.5) * 35; // 缩放并居中
-                        const py = -(y / height - 0.5) * 20; // Y轴翻转并缩放
+                        const px = (x / width - 0.5) * 40; // 缩放并居中（调大）
+                        const py = -(y / height - 0.5) * 22; // Y轴翻转并缩放（调大）
                         const pz = (Math.random() - 0.5) * 0.5; // 添加少量Z轴随机
                         points.push({ x: px, y: py, z: pz });
                     }
@@ -1083,7 +1083,7 @@
             material = new THREE.ShaderMaterial({
                 uniforms: {
                     uTime: { value: 0 },
-                    uWeightGalaxy: { value: 1.0 }, uWeightTesseract: { value: 0.0 }, uWeightMobius: { value: 0.0 }, uWeightShore: { value: 0.0 }, uWeightCustom: { value: 0.0 },
+                    uWeightGalaxy: { value: 0.0 }, uWeightTesseract: { value: 0.0 }, uWeightMobius: { value: 0.0 }, uWeightShore: { value: 1.0 }, uWeightCustom: { value: 0.0 },
                     uChaos: { value: 0 }, uSpread: { value: 0.0 }, 
                     uPixelRatio: { value: renderer.getPixelRatio() },
                     uColorInside: { value: new THREE.Color(0xffaa33) },
