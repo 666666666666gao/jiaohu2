@@ -433,17 +433,24 @@
         window.hands = null;
         let handOpenness = 0, handX = 0, handY = 0, smoothedOpenness = 0;
         const colorThemes = [
-            { inside: '#ffaa33', outside: '#1b3984', bg: '#1b3984' }, // 默认金橙+深蓝
+            { inside: '#ffaa33', outside: '#1b3984', bg: '#1b3984' }, // 金橙 + 深蓝
             { inside: '#00ffcc', outside: '#0044ff', bg: '#002255' }, // 青绿霓虹
             { inside: '#ff3366', outside: '#ffcc33', bg: '#331100' }, // 暖色能量
-            { inside: '#bd00ff', outside: '#330066', bg: '#110022' }  // 紫色赛博
+            { inside: '#bd00ff', outside: '#330066', bg: '#110022' }, // 紫色赛博
+            { inside: '#00ff88', outside: '#005544', bg: '#002222' }, // 翡翠绿色
+            { inside: '#ffffff', outside: '#55ccff', bg: '#003355' }, // 冰蓝星尘
+            { inside: '#ffdd88', outside: '#ff8800', bg: '#442200' }, // 日出金光
+            { inside: '#ff66ff', outside: '#6600ff', bg: '#220033' }  // 赛博樱花
         ];
         let currentThemeIndex = 0;
         let lastGestureColorTime = 0;
-        let oneGestureActive = false;
+        let breathState = 'idle'; // idle | closed | open
+        let lastBreathTime = 0;
         let isTimelineActive = false;
         let timelineT = 0.0; // 0 线稿 → 0.5 雕塑 → 1 星空
         let energyBurstEndTime = 0;
+        let lastMagicTime = 0;
+        let lastTipX = 0, lastTipY = 0;
         let bloomPass = null;
         let isDrawing = false, lastX = 0, lastY = 0;
         const paintCanvas = document.getElementById('paint-canvas');
@@ -1005,38 +1012,18 @@
             lastGestureColorTime = now;
             currentThemeIndex = (currentThemeIndex + 1) % colorThemes.length;
             applyColorTheme(currentThemeIndex);
-            updateStatus('手势：切换主题配色', '#00eaff');
+            updateStatus('呼吸：切换主题配色', '#00eaff');
         }
 
         function isFingerUp(landmarks, tipIndex, pipIndex) {
-            return landmarks[tipIndex].y < landmarks[pipIndex].y - 0.02;
-        }
-
-        function detectOneGesture(landmarks) {
-            const indexUp = isFingerUp(landmarks, 8, 6);
-            const middleUp = isFingerUp(landmarks, 12, 10);
-            const ringUp = isFingerUp(landmarks, 16, 14);
-            const pinkyUp = isFingerUp(landmarks, 20, 18);
-            return indexUp && !middleUp && !ringUp && !pinkyUp;
+            return landmarks[tipIndex].y < landmarks[pipIndex].y - 0.015;
         }
 
         function detectTwoFingerTimelineGesture(landmarks) {
             const indexUp = isFingerUp(landmarks, 8, 6);
             const middleUp = isFingerUp(landmarks, 12, 10);
-            const ringUp = isFingerUp(landmarks, 16, 14);
-            const pinkyUp = isFingerUp(landmarks, 20, 18);
-            // 剪刀手：食指+中指抬起，其它收起
-            return indexUp && middleUp && !ringUp && !pinkyUp;
-        }
-
-        function handleColorGesture(landmarks) {
-            const gesture = detectOneGesture(landmarks);
-            if (gesture && !oneGestureActive) {
-                oneGestureActive = true;
-                cycleColorTheme();
-            } else if (!gesture) {
-                oneGestureActive = false;
-            }
+            // 更宽松的剪刀手：只要食指+中指明显伸直即可
+            return indexUp && middleUp;
         }
 
         function handleTimelineGesture(landmarks) {
@@ -1072,17 +1059,40 @@
                 handX = (tip.x - 0.5) * 2; 
                 handY = (tip.y - 0.5) * 2;
 
-                handleColorGesture(mainHand);
+                // 呼吸触发配色：一次收缩→张开
+                const now = performance.now();
+                if (handOpenness < 0.25) {
+                    breathState = 'closed';
+                } else if (handOpenness > 0.75 && breathState === 'closed') {
+                    breathState = 'open';
+                    if (now - lastBreathTime > 800) {
+                        lastBreathTime = now;
+                        cycleColorTheme();
+                    }
+                }
+
                 handleTimelineGesture(mainHand);
 
-                // 能量收束：检测两只手靠近
-                if (results.multiHandLandmarks.length > 1) {
-                    const other = results.multiHandLandmarks[1];
-                    const w2 = other[0];
-                    const dist = Math.hypot(wrist.x - w2.x, wrist.y - w2.y);
-                    if (dist < 0.12) {
-                        energyBurstEndTime = performance.now() * 0.001 + 1.0; // 1 秒能量特效
-                        updateStatus("⚡ 能量收束！", "#ffdd55");
+                // 奇异博士式能量手势：张开手掌，快速画圈
+                const tipPrevX = lastTipX;
+                const tipPrevY = lastTipY;
+                lastTipX = tip.x;
+                lastTipY = tip.y;
+                const vx = tip.x - tipPrevX;
+                const vy = tip.y - tipPrevY;
+                const speed = Math.hypot(vx, vy);
+                const openPalm =
+                    isFingerUp(mainHand, 8, 6) &&
+                    isFingerUp(mainHand, 12, 10) &&
+                    isFingerUp(mainHand, 16, 14) &&
+                    isFingerUp(mainHand, 20, 18);
+                const nearCenter = Math.abs(tip.x - 0.5) < 0.25 && Math.abs(tip.y - 0.5) < 0.25;
+                if (openPalm && nearCenter && speed > 0.06) {
+                    const tSec = performance.now() * 0.001;
+                    if (tSec - lastMagicTime > 1.2) { // 冷却
+                        lastMagicTime = tSec;
+                        energyBurstEndTime = tSec + 1.2;
+                        updateStatus("✨ 魔法能量收束", "#ffdd55");
                     }
                 }
 
