@@ -810,6 +810,7 @@
                 if(isMobile) btn.innerText = "📷 交互";
                 
                 // 设置初始扩散状态
+                handOpenness = 1.0;
                 smoothedOpenness = 1.0;
                 if(material) {
                     material.uniforms.uSpread.value = smoothedOpenness * 1.5;
@@ -844,6 +845,7 @@
             // 手机端文案保持不变
             
             // 设置初始扩散状态
+            handOpenness = 1.0;
             smoothedOpenness = 1.0;
             if(material) {
                 material.uniforms.uSpread.value = smoothedOpenness * 1.5;
