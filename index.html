@@ -328,6 +328,8 @@
         </div>
     </div>
 
+    <input type="file" id="image-upload" accept="image/*" style="display:none" />
+
     <div id="ui">
         <div class="dock-panel" id="main-dock">
             <div class="btn-group" id="main-btns">
@@ -336,6 +338,7 @@
                 <button id="btn-tesseract" class="shape-btn" onclick="setMode('tesseract')">四维投影</button>
                 <button id="btn-mobius" class="shape-btn" onclick="setMode('mobius')">莫比乌斯</button>
                 <button id="btn-draw" class="shape-btn" onclick="openDrawingModal()">🖌️ 手绘</button>
+                <button id="btn-image" class="shape-btn" onclick="triggerImageUpload()">🖼️ 图片</button>
                 <button id="btn-webcam" class="shape-btn" onclick="attemptWebcam()">📷 手势控制</button>
                 <button id="btn-immersive" class="shape-btn" onclick="toggleImmersive()">⛶ 全屏</button>
                 <button id="btn-custom" class="shape-btn" style="display:none;">自定义</button>
@@ -432,6 +435,8 @@
         let isDrawing = false, lastX = 0, lastY = 0;
         const paintCanvas = document.getElementById('paint-canvas');
         const ctx = paintCanvas.getContext('2d');
+        const imageProcessCanvas = document.createElement('canvas');
+        const imageProcessCtx = imageProcessCanvas.getContext('2d');
 
         // --- DOM 操作辅助 ---
         function checkMobileUI() {
@@ -700,11 +705,15 @@
             bindEvent('rgb-r', 'oninput', updateFromRGB);
             bindEvent('rgb-g', 'oninput', updateFromRGB);
             bindEvent('rgb-b', 'oninput', updateFromRGB);
+
+            const imageInput = document.getElementById('image-upload');
+            if(imageInput) imageInput.addEventListener('change', handleImageUpload);
         }
 
         window.attemptWebcam = attemptWebcam;
         window.toggleImmersive = toggleImmersive;
         window.setMode = setMode;
+        window.triggerImageUpload = triggerImageUpload;
         window.clearCanvas = () => { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, paintCanvas.width, paintCanvas.height); };
         window.openDrawingModal = () => { document.getElementById('drawing-modal').classList.add('visible'); setTimeout(initPaintCanvas, 50); window.clearCanvas(); };
         window.closeModal = () => document.getElementById('drawing-modal').classList.remove('visible');
@@ -999,11 +1008,12 @@
         function setMode(mode) {
             document.querySelectorAll('.shape-btn').forEach(b => { if(b.id !== 'btn-webcam' && b.id !== 'btn-immersive') b.classList.remove('active'); });
             document.getElementById('btn-'+mode).classList.add('active');
-            material.uniforms.uWeightGalaxy.value = 0; material.uniforms.uWeightTesseract.value = 0; material.uniforms.uWeightMobius.value = 0; material.uniforms.uWeightShore.value = 0; material.uniforms.uWeightCustom.value = 0;
+            material.uniforms.uWeightGalaxy.value = 0; material.uniforms.uWeightTesseract.value = 0; material.uniforms.uWeightMobius.value = 0; material.uniforms.uWeightShore.value = 0; material.uniforms.uWeightImage.value = 0; material.uniforms.uWeightCustom.value = 0;
             if(mode==='galaxy') material.uniforms.uWeightGalaxy.value = 1;
             if(mode==='tesseract') material.uniforms.uWeightTesseract.value = 1;
             if(mode==='mobius') material.uniforms.uWeightMobius.value = 1;
             if(mode==='shore') material.uniforms.uWeightShore.value = 1;
+            if(mode==='image') material.uniforms.uWeightImage.value = 1;
             if(mode==='custom') material.uniforms.uWeightCustom.value = 1;
         }
 
@@ -1053,6 +1063,84 @@
             return points.length > 0 ? points : [{ x: 0, y: 0, z: 0 }]; // 如果没找到点，返回默认点
         }
 
+        function triggerImageUpload() {
+            const input = document.getElementById('image-upload');
+            if (input) input.click();
+        }
+
+        function handleImageUpload(event) {
+            const file = event.target.files ? event.target.files[0] : null;
+            if (!file) return;
+            if (!file.type.startsWith('image/')) {
+                alert('请选择图片文件');
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    const points = extractImagePoints(img);
+                    if(points.length === 0) {
+                        alert('未检测到足够的图像细节，请选择对比更明显的图片');
+                        return;
+                    }
+                    applyImagePoints(points);
+                };
+                img.onerror = () => alert('图片加载失败，请重试');
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+            event.target.value = '';
+        }
+
+        function extractImagePoints(img) {
+            const maxSize = 700;
+            const largestSide = Math.max(img.width, img.height);
+            const scale = largestSide > maxSize ? maxSize / largestSide : 1;
+            const width = Math.max(1, Math.floor(img.width * scale));
+            const height = Math.max(1, Math.floor(img.height * scale));
+            imageProcessCanvas.width = width;
+            imageProcessCanvas.height = height;
+            imageProcessCtx.clearRect(0, 0, width, height);
+            imageProcessCtx.drawImage(img, 0, 0, width, height);
+            const data = imageProcessCtx.getImageData(0, 0, width, height).data;
+            const points = [];
+            const step = Math.max(2, Math.floor(Math.min(width, height) / 200));
+            for (let y = 0; y < height; y += step) {
+                for (let x = 0; x < width; x += step) {
+                    const idx = (y * width + x) * 4;
+                    const alpha = data[idx + 3];
+                    if(alpha < 40) continue;
+                    const brightness = (data[idx] + data[idx+1] + data[idx+2]) / 3;
+                    if(brightness < 35) continue;
+                    const px = (x / width - 0.5) * 40;
+                    const aspect = height / width;
+                    const py = -(y / height - 0.5) * 40 * aspect;
+                    const pz = (Math.random() - 0.5) * 1.5;
+                    points.push({ x: px, y: py, z: pz });
+                }
+            }
+            return points;
+        }
+
+        function applyImagePoints(points) {
+            if(!particleSystem || !particleSystem.geometry.attributes.targetImage) return;
+            if(points.length === 0) {
+                alert('请使用包含明显内容的图片');
+                return;
+            }
+            const attr = particleSystem.geometry.attributes.targetImage.array;
+            for(let i = 0; i < count; i++) {
+                const p = points[Math.floor(Math.random() * points.length)];
+                const i3 = i * 3;
+                attr[i3] = p.x + (Math.random()-0.5) * 0.5;
+                attr[i3+1] = p.y + (Math.random()-0.5) * 0.5;
+                attr[i3+2] = p.z + (Math.random()-0.5) * 0.5;
+            }
+            particleSystem.geometry.attributes.targetImage.needsUpdate = true;
+            setMode('image');
+        }
+
         function createMainParticles() {
             // 预生成"上岸"文字点集
             const shoreTextPoints = generateShoreTextPoints();
@@ -1063,6 +1151,7 @@
             const targetTesseract = new Float32Array(count * 3);
             const targetMobius = new Float32Array(count * 3);
             const targetShore = new Float32Array(count * 3);
+            const targetImage = new Float32Array(count * 3);
             const targetCustom = new Float32Array(count * 3); 
             const mixRatios = new Float32Array(count); 
             const sizes = new Float32Array(count);
@@ -1088,6 +1177,11 @@
                 targetShore[i3] = shorePoint.x + scatter;
                 targetShore[i3+1] = shorePoint.y + scatter;
                 targetShore[i3+2] = shorePoint.z + scatter;
+
+                targetImage[i3] = targetGalaxy[i3];
+                targetImage[i3+1] = targetGalaxy[i3+1];
+                targetImage[i3+2] = targetGalaxy[i3+2];
+
                 targetCustom[i3] = targetGalaxy[i3]; targetCustom[i3+1] = targetGalaxy[i3+1]; targetCustom[i3+2] = targetGalaxy[i3+2];
                 mixRatios[i] = Math.min(r / 20, 1.0); sizes[i] = Math.random();
                 randomness[i3] = (Math.random()-0.5) * 2; randomness[i3+1] = (Math.random()-0.5) * 2; randomness[i3+2] = (Math.random()-0.5) * 2;
@@ -1097,6 +1191,7 @@
             geometry.setAttribute('targetTesseract', new THREE.BufferAttribute(targetTesseract, 3));
             geometry.setAttribute('targetMobius', new THREE.BufferAttribute(targetMobius, 3));
             geometry.setAttribute('targetShore', new THREE.BufferAttribute(targetShore, 3));
+            geometry.setAttribute('targetImage', new THREE.BufferAttribute(targetImage, 3));
             geometry.setAttribute('targetCustom', new THREE.BufferAttribute(targetCustom, 3));
             geometry.setAttribute('mixRatio', new THREE.BufferAttribute(mixRatios, 1));
             geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
@@ -1105,7 +1200,7 @@
             material = new THREE.ShaderMaterial({
                 uniforms: {
                     uTime: { value: 0 },
-                    uWeightGalaxy: { value: 0.0 }, uWeightTesseract: { value: 0.0 }, uWeightMobius: { value: 0.0 }, uWeightShore: { value: 1.0 }, uWeightCustom: { value: 0.0 },
+                    uWeightGalaxy: { value: 0.0 }, uWeightTesseract: { value: 0.0 }, uWeightMobius: { value: 0.0 }, uWeightShore: { value: 1.0 }, uWeightImage: { value: 0.0 }, uWeightCustom: { value: 0.0 },
                     uChaos: { value: 0 }, uSpread: { value: 1.5 }, 
                     uPixelRatio: { value: renderer.getPixelRatio() },
                     uColorInside: { value: new THREE.Color(0xffaa33) },
@@ -1113,15 +1208,15 @@
                     uMouseWorld: { value: new THREE.Vector3(0, 0, 0) }
                 },
                 vertexShader: `
-                    uniform float uTime; uniform float uWeightGalaxy; uniform float uWeightTesseract; uniform float uWeightMobius; uniform float uWeightShore; uniform float uWeightCustom;
+                    uniform float uTime; uniform float uWeightGalaxy; uniform float uWeightTesseract; uniform float uWeightMobius; uniform float uWeightShore; uniform float uWeightImage; uniform float uWeightCustom;
                     uniform float uChaos; uniform float uSpread; uniform float uPixelRatio; uniform vec3 uColorInside; uniform vec3 uColorOutside; uniform vec3 uMouseWorld;
-                    attribute vec3 targetGalaxy; attribute vec3 targetTesseract; attribute vec3 targetMobius; attribute vec3 targetShore; attribute vec3 targetCustom;
+                    attribute vec3 targetGalaxy; attribute vec3 targetTesseract; attribute vec3 targetMobius; attribute vec3 targetShore; attribute vec3 targetImage; attribute vec3 targetCustom;
                     attribute float mixRatio; attribute float size; attribute vec3 randomness;
                     varying vec3 vColor;
                     vec3 getNoise(vec3 p) { return vec3(sin(p.y+uTime), sin(p.z+uTime), sin(p.x+uTime)); }
                     void main() {
                         vColor = mix(uColorInside, uColorOutside, mixRatio);
-                        vec3 pos = targetGalaxy * uWeightGalaxy + targetTesseract * uWeightTesseract + targetMobius * uWeightMobius + targetShore * uWeightShore + targetCustom * uWeightCustom;
+                        vec3 pos = targetGalaxy * uWeightGalaxy + targetTesseract * uWeightTesseract + targetMobius * uWeightMobius + targetShore * uWeightShore + targetImage * uWeightImage + targetCustom * uWeightCustom;
                         float spreadDist = length(randomness);
                         vec3 spreadOffset = randomness * pow(spreadDist, 4.0) * uSpread * 10.0; 
                         pos += spreadOffset;
